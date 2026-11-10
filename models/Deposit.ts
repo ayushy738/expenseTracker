@@ -2,7 +2,8 @@ import mongoose, { Schema, models } from "mongoose";
 
 const DepositSchema = new Schema(
   {
-    depositId: { type: String, required: true, unique: true, index: true },
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    depositId: { type: String, required: true },
     amount: { type: Number, required: true, min: 0 },
     source: { type: String, required: true, trim: true },
     description: { type: String, trim: true, default: "" },
@@ -14,5 +15,6 @@ const DepositSchema = new Schema(
   },
   { timestamps: true }
 );
+DepositSchema.index({ userId: 1, depositId: 1 }, { unique: true });
 
 export const DepositModel = models.Deposit || mongoose.model("Deposit", DepositSchema);

@@ -40,7 +40,8 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/components/ui/toast";
 import { categories, type DashboardSummary, type Deposit, type Expense, type Goal, type SavingsFund } from "@/types/finance";
-import { cn, formatCurrency, formatDate, toPercent } from "@/lib/utils";
+import { formatCurrency, formatDate, toPercent } from "@/lib/utils";
+import { apiFetch } from "@/lib/client-api";
 
 const chartColors = ["#0d9488", "#f59e0b", "#2563eb", "#e11d48", "#7c3aed", "#16a34a", "#ea580c", "#0891b2", "#64748b"];
 
@@ -61,10 +62,10 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
     async function load() {
       try {
         const [depositRes, expenseRes, fundRes, goalRes] = await Promise.all([
-          fetch("/api/deposits"),
-          fetch("/api/expenses"),
-          fetch("/api/savings-funds"),
-          fetch("/api/goals")
+          apiFetch("/api/deposits"),
+          apiFetch("/api/expenses"),
+          apiFetch("/api/savings-funds"),
+          apiFetch("/api/goals")
         ]);
         if (![depositRes, expenseRes, fundRes, goalRes].every((res) => res.ok)) throw new Error("API unavailable");
         setDeposits(await depositRes.json());
@@ -105,7 +106,7 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
       totalSpent: deposits.reduce((sum, item) => sum + item.spentAmount, 0),
       remainingMoney: deposits.reduce((sum, item) => sum + item.remainingAmount, 0),
       activeDeposits: deposits.filter((item) => item.remainingAmount > 0).length,
-      monthlySpending: enrichedExpenses.filter((item) => isThisMonth(item.date)).reduce((sum, item) => sum + item.amount, 0),
+      monthlySpending: enrichedExpenses.filter((item) => !item.isReversed && isThisMonth(item.date)).reduce((sum, item) => sum + item.amount, 0),
       monthlySavings: deposits.filter((item) => isThisMonth(item.createdAt)).reduce((sum, item) => sum + item.savingsAmount, 0)
     };
   }, [deposits, enrichedExpenses]);
@@ -122,7 +123,8 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
 
   async function createDeposit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const amount = Number(form.get("amount"));
     const savingsAmount = Number(form.get("savingsAmount"));
     const payload = {
@@ -139,7 +141,7 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
     }
 
     try {
-      const res = await fetch("/api/deposits", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const res = await apiFetch("/api/deposits", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
       const created = await res.json();
       setDeposits((current) => [created, ...current]);
@@ -148,13 +150,14 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
       toast({ title: "Deposit was not saved", description: "Check the MongoDB connection and try again." });
       return;
     }
-    event.currentTarget.reset();
+    formElement.reset();
     toast({ title: "Deposit created", description: "This deposit now has its own tracking branch." });
   }
 
   async function createExpense(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const depositIdValue = String(form.get("depositId"));
     const amount = Number(form.get("amount"));
     const deposit = deposits.find((item) => item.depositId === depositIdValue);
@@ -171,7 +174,7 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
     };
 
     try {
-      const res = await fetch("/api/expenses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const res = await apiFetch("/api/expenses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
       const created = await res.json();
       setExpenses((current) => [created, ...current]);
@@ -187,20 +190,21 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
           : item
       )
     );
-    event.currentTarget.reset();
+    formElement.reset();
     toast({ title: "Expense linked", description: `Spent from ${depositIdValue}, not the generic balance.` });
   }
 
   async function createFund(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const payload = {
       name: String(form.get("name")),
       savedAmount: Number(form.get("savedAmount")),
       goalAmount: Number(form.get("goalAmount"))
     };
     try {
-      const res = await fetch("/api/savings-funds", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const res = await apiFetch("/api/savings-funds", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
       const created = await res.json();
       setFunds((current) => [created, ...current]);
@@ -209,12 +213,13 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
       toast({ title: "Savings fund was not saved", description: "Check the MongoDB connection and try again." });
       return;
     }
-    event.currentTarget.reset();
+    formElement.reset();
   }
 
   async function createGoal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const payload = {
       name: String(form.get("name")),
       targetAmount: Number(form.get("targetAmount")),
@@ -222,7 +227,7 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
       deadline: String(form.get("deadline") || "")
     };
     try {
-      const res = await fetch("/api/goals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const res = await apiFetch("/api/goals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
       const created = await res.json();
       setGoals((current) => [created, ...current]);
@@ -231,13 +236,13 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
       toast({ title: "Goal was not saved", description: "Check the MongoDB connection and try again." });
       return;
     }
-    event.currentTarget.reset();
+    formElement.reset();
   }
 
   async function deleteDeposit(id: string) {
     if (!confirm(`Delete ${id} and all expenses linked to it?`)) return;
     try {
-      const res = await fetch(`/api/deposits/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/deposits/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error();
       setDeposits((current) => current.filter((item) => item.depositId !== id));
       setExpenses((current) => current.filter((item) => item.depositId !== id));
@@ -261,7 +266,7 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
     const remainingAmount = spendableAmount - spentAmount;
     const payload = { amount, source, description, savingsAmount };
     try {
-      const res = await fetch(`/api/deposits/${deposit.depositId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const res = await apiFetch(`/api/deposits/${deposit.depositId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
       setDeposits((current) =>
         current.map((item) =>
@@ -277,10 +282,14 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
   }
 
   async function deleteExpense(expense: Expense) {
+    if (expense.bankTransactionId) {
+      toast({ title: "Imported expense", description: "Imported expenses are retained with their bank transaction record." });
+      return;
+    }
     if (!confirm("Delete this expense?")) return;
     try {
       if (!expense._id) throw new Error();
-      const res = await fetch(`/api/expenses/${expense._id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/expenses/${expense._id}`, { method: "DELETE" });
       if (!res.ok) throw new Error();
       setExpenses((current) => current.filter((item) => item !== expense));
       setDeposits((current) =>
@@ -297,6 +306,10 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
   }
 
   async function editExpense(expense: Expense) {
+    if (expense.bankTransactionId) {
+      toast({ title: "Imported expense", description: "Correct imported transactions from the transaction inbox." });
+      return;
+    }
     const amount = Number(prompt("Expense amount", String(expense.amount)) ?? expense.amount);
     const category = prompt("Category", expense.category) ?? expense.category;
     const description = prompt("Description", expense.description ?? "") ?? expense.description;
@@ -313,7 +326,7 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
     const payload = { amount, category, description };
     try {
       if (!expense._id) throw new Error();
-      const res = await fetch(`/api/expenses/${expense._id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const res = await apiFetch(`/api/expenses/${expense._id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
       setExpenses((current) => current.map((item) => (item === expense ? { ...item, ...payload } as Expense : item)));
       setDeposits((current) =>
@@ -363,33 +376,30 @@ export function FinanceClient({ view, depositId }: { view: View; depositId?: str
   return <DashboardView {...common} />;
 }
 
-type CommonProps = ReturnType<typeof useCommonShape>;
-function useCommonShape() {
-  return {} as {
-    deposits: Deposit[];
-    expenses: Expense[];
-    funds: SavingsFund[];
-    goals: Goal[];
-    summary: DashboardSummary;
-    filteredDeposits: Deposit[];
-    filteredExpenses: Expense[];
-    query: string;
-    setQuery: (value: string) => void;
-    categoryFilter: string;
-    setCategoryFilter: (value: string) => void;
-    sourceFilter: string;
-    setSourceFilter: (value: string) => void;
-    createDeposit: (event: FormEvent<HTMLFormElement>) => void;
-    createExpense: (event: FormEvent<HTMLFormElement>) => void;
-    createFund: (event: FormEvent<HTMLFormElement>) => void;
-    createGoal: (event: FormEvent<HTMLFormElement>) => void;
-    deleteDeposit: (id: string) => void;
-    editDeposit: (deposit: Deposit) => void;
-    deleteExpense: (expense: Expense) => void;
-    editExpense: (expense: Expense) => void;
-    isOffline: boolean;
-  };
-}
+type CommonProps = {
+  deposits: Deposit[];
+  expenses: Expense[];
+  funds: SavingsFund[];
+  goals: Goal[];
+  summary: DashboardSummary;
+  filteredDeposits: Deposit[];
+  filteredExpenses: Expense[];
+  query: string;
+  setQuery: (value: string) => void;
+  categoryFilter: string;
+  setCategoryFilter: (value: string) => void;
+  sourceFilter: string;
+  setSourceFilter: (value: string) => void;
+  createDeposit: (event: FormEvent<HTMLFormElement>) => void;
+  createExpense: (event: FormEvent<HTMLFormElement>) => void;
+  createFund: (event: FormEvent<HTMLFormElement>) => void;
+  createGoal: (event: FormEvent<HTMLFormElement>) => void;
+  deleteDeposit: (id: string) => void;
+  editDeposit: (deposit: Deposit) => void;
+  deleteExpense: (expense: Expense) => void;
+  editExpense: (expense: Expense) => void;
+  isOffline: boolean;
+};
 
 function PageHeader({ title, eyebrow, action }: { title: string; eyebrow: string; action?: ReactNode }) {
   return (
@@ -615,7 +625,8 @@ function SavingsView(props: CommonProps) {
 }
 
 function AnalyticsView(props: CommonProps) {
-  const byCategory = groupTotals(props.expenses, "category");
+  const activeExpenses = props.expenses.filter((expense) => !expense.isReversed);
+  const byCategory = groupTotals(activeExpenses, "category");
   const bySource = props.deposits.map((item) => ({ name: `${item.source} ${item.depositId}`, value: item.amount }));
   return (
     <>
@@ -634,7 +645,7 @@ function AnalyticsView(props: CommonProps) {
       <div className="grid gap-5 lg:grid-cols-2">
         <ChartCard title="Spending By Category"><DistributionChart data={byCategory} /></ChartCard>
         <ChartCard title="Spending By Source"><BarTotals data={bySource} /></ChartCard>
-        <ChartCard title="Monthly Spending Trend"><TrendChart data={trendFromExpenses(props.expenses)} /></ChartCard>
+        <ChartCard title="Monthly Spending Trend"><TrendChart data={trendFromExpenses(activeExpenses)} /></ChartCard>
         <ChartCard title="Savings Growth Trend"><SavingsTrend deposits={props.deposits} /></ChartCard>
       </div>
       <Card className="mt-5">
@@ -830,15 +841,19 @@ function ExpenseList({ expenses, onDelete, onEdit, title = "Recent Expenses" }: 
           <div key={`${expense._id ?? expense.depositId}-${index}`} className="flex items-center justify-between gap-3 rounded-2xl border bg-background/48 p-4">
             <div className="min-w-0">
               <span className="rounded-full bg-primary/12 px-2 py-1 text-xs font-semibold text-primary">{expense.category}</span>
-              <p className="mt-2 truncate font-semibold">{expense.description || "Untitled expense"}</p>
+              {expense.bankTransactionId ? <span className="ml-2 rounded-full bg-muted px-2 py-1 text-xs">Imported</span> : null}
+              {expense.isReversed ? <span className="ml-2 rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">Reversed</span> : null}
+              <p className={`mt-2 truncate font-semibold ${expense.isReversed ? "line-through opacity-60" : ""}`}>{expense.description || "Untitled expense"}</p>
               <p className="text-sm text-muted-foreground">{expense.depositId} • {expense.depositReference?.source ?? "Deposit"} • {formatDate(expense.date)}</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <p className="font-bold">{formatCurrency(expense.amount)}</p>
-              <Button variant="ghost" size="sm" onClick={() => onEdit(expense)}>Edit</Button>
-              <Button variant="ghost" size="icon" aria-label="Delete expense" onClick={() => onDelete(expense)}>
-                <Trash2 className="h-4 w-4 text-red-500" />
-              </Button>
+              {!expense.bankTransactionId ? <>
+                <Button variant="ghost" size="sm" onClick={() => onEdit(expense)}>Edit</Button>
+                <Button variant="ghost" size="icon" aria-label="Delete expense" onClick={() => onDelete(expense)}>
+                  <Trash2 className="h-4 w-4 text-red-500" />
+                </Button>
+              </> : null}
             </div>
           </div>
         ))}

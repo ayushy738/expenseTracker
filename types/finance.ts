@@ -31,6 +31,10 @@ export type Expense = {
   depositId: string;
   depositReference?: Deposit;
   date: string;
+  bankTransactionId?: string;
+  isReversed?: boolean;
+  reversedAt?: string;
+  reversalReason?: string;
   createdAt?: string;
 };
 
@@ -49,6 +53,23 @@ export type Goal = {
   currentAmount: number;
   deadline?: string;
   createdAt?: string;
+};
+
+export type BankTransactionStatus = "PENDING" | "CONFIRMED" | "IGNORED" | "REVERSED";
+
+export type BankTransaction = {
+  _id: string;
+  amount: number;
+  transactionType: "DEBIT" | "CREDIT";
+  merchant?: string;
+  bank?: string;
+  reference?: string;
+  timestamp: string;
+  depositId?: string;
+  category: ExpenseCategory;
+  status: BankTransactionStatus;
+  expenseId?: string;
+  createdAt: string;
 };
 
 export type DashboardSummary = {

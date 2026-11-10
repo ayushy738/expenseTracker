@@ -1,6 +1,7 @@
 import { connectToDatabase } from "@/lib/mongodb";
 import { DepositModel } from "@/models/Deposit";
 import { ExpenseModel } from "@/models/Expense";
+import { requireUser } from "@/lib/auth";
 
 function csvEscape(value: unknown) {
   const text = String(value ?? "");
@@ -8,13 +9,14 @@ function csvEscape(value: unknown) {
   return text;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await requireUser({}, request); if (auth.response) return auth.response; const userId = auth.context.userId;
   await connectToDatabase();
-  const deposits = await DepositModel.find().sort({ createdAt: -1 }).lean();
-  const expenses = await ExpenseModel.find().sort({ date: -1 }).lean();
+  const deposits = await DepositModel.find({ userId }).sort({ createdAt: -1 }).lean();
+  const expenses = await ExpenseModel.find({ userId }).sort({ date: -1 }).lean();
 
   const lines = [
-    "type,id,source_or_category,amount,saved,spent,remaining,description,date",
+    "type,id,source_or_category,amount,saved,spent,remaining,description,date,status",
     ...deposits.map((item) =>
       [
         "deposit",
@@ -25,7 +27,8 @@ export async function GET() {
         item.spentAmount,
         item.remainingAmount,
         item.description,
-        item.createdAt?.toISOString?.() ?? item.createdAt
+        item.createdAt?.toISOString?.() ?? item.createdAt,
+        "active"
       ].map(csvEscape).join(",")
     ),
     ...expenses.map((item) =>
@@ -38,7 +41,8 @@ export async function GET() {
         "",
         "",
         item.description,
-        item.date?.toISOString?.() ?? item.date
+        item.date?.toISOString?.() ?? item.date,
+        item.isReversed ? "reversed" : "active"
       ].map(csvEscape).join(",")
     )
   ];

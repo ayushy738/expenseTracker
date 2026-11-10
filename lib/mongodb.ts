@@ -3,6 +3,14 @@ import mongoose from "mongoose";
 const MONGODB_URI = process.env.MONGODB_URI;
 const MONGODB_DB = process.env.MONGODB_DB;
 
+export function resolveDatabaseName(_uri: string, configuredName?: string) {
+  const override = configuredName?.trim();
+  if (override) return override;
+  // A URI often still contains the old application's database name. Default
+  // to the isolated v2 database instead of silently reusing that old path.
+  return "finance_tracker_v2";
+}
+
 type CachedConnection = {
   conn: typeof mongoose | null;
   promise: Promise<typeof mongoose> | null;
@@ -26,10 +34,11 @@ export async function connectToDatabase() {
 
   if (cached.conn) return cached.conn;
 
-  const hasDatabaseName = Boolean(new URL(MONGODB_URI).pathname.replace("/", ""));
   const options = {
     bufferCommands: false,
-    dbName: MONGODB_DB || (hasDatabaseName ? undefined : "expenseTracker")
+    // MONGODB_DB is authoritative so Atlas URIs that contain an old database
+    // path cannot silently direct this deployment to the wrong database.
+    dbName: resolveDatabaseName(MONGODB_URI, MONGODB_DB)
   };
 
   cached.promise ??= mongoose.connect(MONGODB_URI, options);

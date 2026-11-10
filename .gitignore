@@ -1,8 +1,10 @@
 # dependencies
 node_modules/
+.cache/
 
 # next.js
 .next/
+*.tsbuildinfo
 out/
 
 # production

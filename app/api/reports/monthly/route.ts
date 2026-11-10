@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/mongodb";
 import { DepositModel } from "@/models/Deposit";
 import { ExpenseModel } from "@/models/Expense";
+import { requireUser } from "@/lib/auth";
 
 export async function GET(request: Request) {
+  const auth = await requireUser({}, request); if (auth.response) return auth.response; const userId = auth.context.userId;
   await connectToDatabase();
   const { searchParams } = new URL(request.url);
   const month = searchParams.get("month") ?? new Date().toISOString().slice(0, 7);
@@ -11,8 +13,8 @@ export async function GET(request: Request) {
   const end = new Date(start);
   end.setUTCMonth(end.getUTCMonth() + 1);
 
-  const deposits = await DepositModel.find({ createdAt: { $gte: start, $lt: end } }).lean();
-  const expenses = await ExpenseModel.find({ date: { $gte: start, $lt: end } }).lean();
+  const deposits = await DepositModel.find({ userId, createdAt: { $gte: start, $lt: end } }).lean();
+  const expenses = await ExpenseModel.find({ userId, date: { $gte: start, $lt: end }, isReversed: { $ne: true } }).lean();
 
   const received = deposits.reduce((sum, item) => sum + item.amount, 0);
   const saved = deposits.reduce((sum, item) => sum + item.savingsAmount, 0);
