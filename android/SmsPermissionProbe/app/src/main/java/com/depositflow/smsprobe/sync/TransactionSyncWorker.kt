@@ -20,13 +20,16 @@ import kotlinx.coroutines.withContext
 class TransactionSyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val preferences = SyncPreferences(applicationContext)
-        if (preferences.isPaused()) return@withContext Result.success()
         val credential = DeviceCredentialStore(applicationContext).load() ?: run {
             preferences.setWarning("Pair this device before syncing queued transactions.")
             return@withContext Result.success()
         }
         val repository = CaptureGraph.repository(applicationContext)
         try {
+            // A permission grant or app restart can resume notifications for transactions
+            // already inserted by a prior 201 response. This never retries an upload.
+            TransactionNotificationDispatcher.deliverPending(applicationContext, repository, credential.baseUrl)
+            if (preferences.isPaused()) return@withContext Result.success()
             val status = PairingApi.status(credential.baseUrl, credential.token)
             if (status != PairingStatus.ACTIVE) {
                 if (status == PairingStatus.REVOKED) preferences.setPaused(true)
@@ -37,6 +40,11 @@ class TransactionSyncWorker(context: Context, parameters: WorkerParameters) : Co
             while (!isStopped) {
                 val item = repository.claimNext() ?: break
                 val candidate = item.candidate
+                if (candidate.isSynthetic || candidate.status == com.depositflow.smsprobe.data.local.CandidateStatus.NEEDS_REVIEW ||
+                    candidate.transactionType == com.depositflow.smsprobe.data.local.TransactionType.UNKNOWN) {
+                    repository.markLocalOnly(candidate.captureId)
+                    continue
+                }
                 val upload = UploadTransaction(
                     captureId = candidate.captureId,
                     amount = candidate.amountMinor / 100.0,
@@ -45,6 +53,7 @@ class TransactionSyncWorker(context: Context, parameters: WorkerParameters) : Co
                     bank = candidate.bank,
                     merchant = candidate.merchant,
                     reference = candidate.reference,
+                    isSynthetic = candidate.isSynthetic,
                 )
                 val response = try {
                     PairingApi.upload(credential.baseUrl, credential.token, upload)
@@ -56,7 +65,14 @@ class TransactionSyncWorker(context: Context, parameters: WorkerParameters) : Co
                 }
                 when (UploadPolicy.classify(response)) {
                     UploadDisposition.SYNCED -> {
-                        repository.complete(candidate.captureId)
+                        val newlyInserted = UploadPolicy.isNewInsertion(response) &&
+                            TransactionNotificationPolicy.isProductionOrigin(credential.baseUrl)
+                        repository.complete(candidate.captureId, newlyInsertedOnServer = newlyInserted)
+                        if (newlyInserted) {
+                            TransactionNotificationDispatcher.deliverNewProductionSync(
+                                applicationContext, repository, candidate.captureId, credential.baseUrl,
+                            )
+                        }
                         preferences.markSuccess()
                         preferences.setWarning(null)
                     }

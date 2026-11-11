@@ -7,6 +7,7 @@ export function transactionFingerprint(input: {
   merchant?: string;
   reference?: string;
   timestamp: Date;
+  testRunId?: string;
 }) {
   const bank = (input.bank ?? "").trim().toLowerCase();
   const reference = (input.reference ?? "").replace(/\s/g, "").toLowerCase();
@@ -15,5 +16,6 @@ export function transactionFingerprint(input: {
   const identity = reference
     ? [bank, input.transactionType, reference, amountPaise].join("|")
     : [bank, input.transactionType, amountPaise, merchant, input.timestamp.toISOString()].join("|");
-  return createHash("sha256").update(identity).digest("hex");
+  const namespacedIdentity = input.testRunId ? `e2e:${input.testRunId}|${identity}` : identity;
+  return createHash("sha256").update(namespacedIdentity).digest("hex");
 }

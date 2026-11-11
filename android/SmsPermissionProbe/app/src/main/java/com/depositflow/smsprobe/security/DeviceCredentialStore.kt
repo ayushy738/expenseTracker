@@ -1,6 +1,7 @@
 package com.depositflow.smsprobe.security
 
 import android.content.Context
+import android.annotation.SuppressLint
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -50,6 +51,7 @@ class DeviceCredentialStore(context: Context) {
     }
 
     @Synchronized
+    @SuppressLint("ApplySharedPref") // Credential deletion must complete before this method returns.
     fun clear() {
         preferences.edit().clear().commit()
         runCatching {

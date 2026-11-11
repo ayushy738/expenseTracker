@@ -47,16 +47,17 @@ sealed interface CandidateDeduplicationDecision {
 
 object CandidateDeduplicator {
     fun decide(candidate: TransactionCandidate, existing: List<TransactionCandidate>): CandidateDeduplicationDecision {
+        val sameKind = existing.filter { it.isSynthetic == candidate.isSynthetic }
         val fresh = CandidateFingerprints.forCandidate(candidate)
         if (fresh.reference != null) {
-            val sameReference = existing.filter { CandidateFingerprints.forCandidate(it).reference == fresh.reference }
+            val sameReference = sameKind.filter { CandidateFingerprints.forCandidate(it).reference == fresh.reference }
             sameReference.firstOrNull { CandidateFingerprints.forCandidate(it).exactReference == fresh.exactReference }?.let {
                 return CandidateDeduplicationDecision.MergeExact(it.captureId)
             }
             if (sameReference.isNotEmpty()) return CandidateDeduplicationDecision.KeepForReview(sameReference.map { it.captureId })
         }
 
-        val similar = existing.filter { prior ->
+        val similar = sameKind.filter { prior ->
             val priorFingerprint = CandidateFingerprints.forCandidate(prior)
             priorFingerprint.coarse == fresh.coarse && CandidateFingerprints.isTimeAndMerchantCompatible(candidate, prior)
         }

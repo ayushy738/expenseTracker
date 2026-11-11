@@ -32,6 +32,7 @@ export type Expense = {
   depositReference?: Deposit;
   date: string;
   bankTransactionId?: string;
+  isTest?: boolean;
   isReversed?: boolean;
   reversedAt?: string;
   reversalReason?: string;
@@ -68,6 +69,8 @@ export type BankTransaction = {
   depositId?: string;
   category: ExpenseCategory;
   status: BankTransactionStatus;
+  isTest?: boolean;
+  testRunId?: string;
   expenseId?: string;
   createdAt: string;
 };

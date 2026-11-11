@@ -3,6 +3,7 @@ package com.depositflow.smsprobe.data.local
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
 
 @Entity(
     tableName = "transaction_candidates",
@@ -30,4 +31,6 @@ data class CandidateEntity(
     val syncStartedAt: Long? = null,
     val syncAttempts: Int = 0,
     val syncError: String? = null,
+    val isSynthetic: Boolean = false,
+    @ColumnInfo(defaultValue = "'SUPPRESSED'") val notificationState: String = "SUPPRESSED",
 )

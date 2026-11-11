@@ -15,6 +15,7 @@ const ExpenseSchema = new Schema(
     depositId: { type: String, required: true, index: true },
     depositReference: { type: Schema.Types.ObjectId, ref: "Deposit", required: true },
     bankTransactionId: { type: Schema.Types.ObjectId, ref: "BankTransaction" },
+    isTest: { type: Boolean, default: false },
     isReversed: { type: Boolean, default: false },
     reversedAt: { type: Date },
     reversalReason: { type: String, trim: true, maxlength: 240 },

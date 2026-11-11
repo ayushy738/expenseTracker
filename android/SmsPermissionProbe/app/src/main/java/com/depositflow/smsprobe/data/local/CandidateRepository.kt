@@ -21,12 +21,13 @@ class CandidateRepository(
     }
 
     fun observeCounts(): Flow<CandidateCounts> = combine(
-        dao.observeTotalCount(), dao.observePendingCount(), dao.observePossibleDuplicateCount(),
-    ) { total, pending, possible -> CandidateCounts(total, pending, possible) }
+        dao.observeTotalCount(), dao.observePendingCount(), dao.observePossibleDuplicateCount(), dao.observeNeedsReviewCount(),
+    ) { total, pending, possible, review -> CandidateCounts(total, pending, possible, review) }
 
     fun observeSyncCounts(): Flow<SyncCounts> = combine(
         dao.observeQueuedCount(), dao.observeUploadingCount(), dao.observeSyncedCount(), dao.observeFailedCount(),
     ) { queued, uploading, synced, failed -> SyncCounts(queued, uploading, synced, failed) }
+        .combine(dao.observeLocalOnlyCount()) { counts, localOnly -> counts.copy(localOnly = localOnly) }
 
     fun observeFailedItems(): Flow<List<CandidateSyncItem>> = dao.observeFailed().map { entities ->
         entities.mapNotNull { entity -> decode(entity)?.let { CandidateSyncItem(it, CandidateSyncState.FAILED, entity.syncError) } }
@@ -40,9 +41,22 @@ class CandidateRepository(
         decode(updated)?.let { CandidateSyncItem(it, CandidateSyncState.UPLOADING, null) }
     }
 
-    suspend fun complete(captureId: String) { dao.finishUpload(captureId, CandidateSyncState.SYNCED.name, null) }
+    suspend fun complete(captureId: String, newlyInsertedOnServer: Boolean = false) = database.withTransaction {
+        val completed = dao.finishUpload(captureId, CandidateSyncState.SYNCED.name, null)
+        if (completed == 1) {
+            dao.setNotificationState(captureId, (if (newlyInsertedOnServer) NotificationState.PENDING else NotificationState.SUPPRESSED).name)
+        }
+    }
     suspend fun requeue(captureId: String, error: String? = null) { dao.finishUpload(captureId, CandidateSyncState.QUEUED.name, error) }
     suspend fun fail(captureId: String, safeMessage: String) { dao.finishUpload(captureId, CandidateSyncState.FAILED.name, safeMessage) }
+    suspend fun markLocalOnly(captureId: String) { dao.markLocalOnly(captureId) }
+    suspend fun claimNotification(captureId: String): Boolean = dao.claimNotification(captureId) == 1
+    suspend fun markNotificationPosted(captureId: String) { dao.markNotificationPosted(captureId) }
+    suspend fun releaseNotificationClaim(captureId: String) { dao.releaseNotificationClaim(captureId) }
+    suspend fun suppressNotification(captureId: String) { dao.setNotificationState(captureId, NotificationState.SUPPRESSED.name) }
+    suspend fun suppressPendingNotifications() { dao.suppressPendingNotifications() }
+    suspend fun syncedCandidate(captureId: String): TransactionCandidate? = dao.getSyncedCandidate(captureId)?.let(::decode)
+    suspend fun pendingNotificationCandidates(): List<TransactionCandidate> = dao.getPendingNotifications().mapNotNull(::decode)
     suspend fun retryFailed(): Int = dao.retryFailed()
     suspend fun clearQueue() = dao.clearAll()
 
@@ -98,6 +112,9 @@ class CandidateRepository(
             merchantFingerprint = fingerprints.merchant,
             encryptedPayload = encrypted.ciphertext,
             payloadIv = encrypted.iv,
+            syncState = if (candidate.isSynthetic || candidate.status == CandidateStatus.NEEDS_REVIEW || candidate.transactionType == TransactionType.UNKNOWN) CandidateSyncState.LOCAL_ONLY.name else CandidateSyncState.QUEUED.name,
+            isSynthetic = candidate.isSynthetic,
+            notificationState = (if (candidate.isSynthetic || candidate.status == CandidateStatus.NEEDS_REVIEW || candidate.transactionType == TransactionType.UNKNOWN) NotificationState.SUPPRESSED else NotificationState.PENDING).name,
         )
     }
 

@@ -44,4 +44,10 @@ class CandidateDeduplicatorTest {
         val later = candidate("later", reference = null, timestamp = 1_500_000)
         assertEquals(CandidateDeduplicationDecision.InsertNew, CandidateDeduplicator.decide(later, listOf(existing)))
     }
+
+    @Test fun syntheticAndRealEventsNeverMergeAcrossTheUploadBoundary() {
+        val synthetic = candidate("synthetic", reference = "UPI123456789").copy(isSynthetic = true)
+        val real = candidate("real", reference = "UPI123456789")
+        assertEquals(CandidateDeduplicationDecision.InsertNew, CandidateDeduplicator.decide(real, listOf(synthetic)))
+    }
 }

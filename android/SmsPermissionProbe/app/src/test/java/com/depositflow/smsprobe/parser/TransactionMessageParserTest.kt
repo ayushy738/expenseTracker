@@ -28,6 +28,24 @@ class TransactionMessageParserTest {
         assertEquals(CaptureSource.SMS, parsed?.source)
     }
 
+    @Test fun parsesExactEmulatorFixtureAsSyntheticOnlyInDebugTestingMode() {
+        val sample = "Rs. 250.00 debited from your account via UPI to TESTSTORE. Ref 123456789012."
+        val candidate = TransactionMessageParser.parseSms(
+            sender = "(650) 555-1212",
+            body = sample,
+            receivedAt = now,
+            enabledSenderIds = setOf("SBI"),
+            debugBuild = true,
+            emulatorTestingEnabled = true,
+        )
+        assertEquals(25_000L, candidate?.amountMinor)
+        assertEquals(TransactionType.DEBIT, candidate?.transactionType)
+        assertEquals("TESTSTORE", candidate?.merchant)
+        assertEquals("123456789012", candidate?.reference)
+        assertTrue(candidate?.isSynthetic == true)
+        assertNull(TransactionMessageParser.parseSms("(650) 555-1212", sample, now, setOf("SBI"), debugBuild = false, emulatorTestingEnabled = true))
+    }
+
     @Test fun parsesCreditAndDifferentIndianTransferFormats() {
         val credited = TransactionMessageParser.parseSms(
             "AD-SBIINB", "Your account is credited with INR 5,000.00 on 15/03/2025 at 13:15. UTR 123456789012", now, setOf("SBI")

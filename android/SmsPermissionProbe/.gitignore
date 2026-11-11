@@ -1,0 +1,23 @@
+# Android Studio and machine-local project state
+.idea/
+*.iml
+/local.properties
+
+# Gradle/Kotlin generated state and outputs
+/.gradle/
+/.kotlin/
+**/build/
+/captures/
+
+# Release artifacts and signing material
+*.apk
+*.aab
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.key
+*.pem
+key.properties
+keystore.properties
+signing.properties

@@ -70,6 +70,31 @@ class CandidateRepositoryTest {
         assertEquals("interrupted-item", recovered?.candidate?.captureId)
     }
 
+    @Test fun syntheticCandidateIsEncryptedLocalOnlyAndNeverClaimedForUpload() = kotlinx.coroutines.runBlocking {
+        repository.insert(candidate("synthetic-item", CaptureSource.SMS).copy(isSynthetic = true))
+        val row = database.candidateDao().getAll().single()
+        assertEquals(CandidateSyncState.LOCAL_ONLY.name, row.syncState)
+        assertTrue(row.isSynthetic)
+        assertFalse(row.encryptedPayload.contains("TESTSTORE"))
+        assertEquals(null, repository.claimNext())
+    }
+
+    @Test fun notificationClaimIsDurableSingleUseAndDuplicateResponseSuppressesIt() = kotlinx.coroutines.runBlocking {
+        repository.insert(candidate("notification-once", CaptureSource.SMS))
+        assertEquals("notification-once", repository.claimNext(now = 1_800_000_000_000)?.candidate?.captureId)
+        repository.complete("notification-once", newlyInsertedOnServer = true)
+        assertTrue(repository.claimNotification("notification-once"))
+        assertFalse(repository.claimNotification("notification-once"))
+        repository.markNotificationPosted("notification-once")
+        assertEquals(NotificationState.POSTED.name, database.candidateDao().getAll().single().notificationState)
+
+        repository.insert(candidate("duplicate-response", CaptureSource.SMS))
+        repository.claimNext(now = 1_800_000_000_000)
+        repository.complete("duplicate-response", newlyInsertedOnServer = false)
+        assertEquals(NotificationState.SUPPRESSED.name, database.candidateDao().getAll().first { it.captureId == "duplicate-response" }.notificationState)
+        assertFalse(repository.claimNotification("duplicate-response"))
+    }
+
     private fun candidate(id: String, source: CaptureSource, reference: String? = "UPI123456789") = TransactionCandidate(
         captureId = id,
         amountMinor = 12_500,

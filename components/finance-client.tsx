@@ -843,7 +843,7 @@ function ExpenseList({ expenses, onDelete, onEdit, title = "Recent Expenses" }: 
               <span className="rounded-full bg-primary/12 px-2 py-1 text-xs font-semibold text-primary">{expense.category}</span>
               {expense.bankTransactionId ? <span className="ml-2 rounded-full bg-muted px-2 py-1 text-xs">Imported</span> : null}
               {expense.isReversed ? <span className="ml-2 rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">Reversed</span> : null}
-              <p className={`mt-2 truncate font-semibold ${expense.isReversed ? "line-through opacity-60" : ""}`}>{expense.description || "Untitled expense"}</p>
+              <p className={`mt-2 truncate font-semibold ${expense.isReversed ? "line-through opacity-60" : ""}`}>{expense.description || "Untitled expense"}{expense.isTest ? " · TEST" : ""}</p>
               <p className="text-sm text-muted-foreground">{expense.depositId} • {expense.depositReference?.source ?? "Deposit"} • {formatDate(expense.date)}</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">

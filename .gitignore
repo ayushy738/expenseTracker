@@ -1,37 +1,61 @@
-# dependencies
+# Dependencies and local caches
 node_modules/
 .cache/
-
-# next.js
 .next/
-*.tsbuildinfo
-out/
-
-# production
+**/.gradle/
+**/.kotlin/
+**/build/
+**/out/
 build/
 dist/
 
-# env files
-.env
-.env*.local
+# TypeScript output
+*.tsbuildinfo
 
-# logs
+# Environment files: permit only the sanitized sample
+.env
+.env.*
+!.env.example
+
+# Logs and diagnostic output
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+*.log
+*.log.*
+diagnostic.data/
 
-# system
+# Local database files and dumps
+*.db
+*.sqlite
+*.sqlite3
+*.bson
+*.wt
+mongod.lock
+mongodb-data/
+mongo-data/
+data/db/
+dump/
+
+# Machine-specific and IDE files
+local.properties
+**/local.properties
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
 
-# editor
-.vscode/
-.idea/
-
-# Android local build configuration
-local.properties
-.gradle/
+# Android captures and release artifacts
 captures/
+*.apk
+*.aab
 *.jks
 *.keystore
+*.p12
+*.pfx
+*.key
+*.pem
+**/key.properties
+**/keystore.properties
+**/signing.properties

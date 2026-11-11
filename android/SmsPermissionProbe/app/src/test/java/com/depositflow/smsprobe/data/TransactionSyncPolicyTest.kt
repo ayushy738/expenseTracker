@@ -23,6 +23,20 @@ class TransactionSyncPolicyTest {
         assertFalse(fields.containsKey("userId"))
     }
 
+    @Test(expected = IllegalArgumentException::class)
+    fun syntheticCandidateCannotBeMappedIntoAnUploadPayload() {
+        UploadPayloadMapper.toFields(UploadTransaction(
+            captureId = "89c2a858-ff40-4f3d-98f1-d6a2d2c10330",
+            amount = 250.0,
+            transactionType = "DEBIT",
+            timestamp = "2026-11-11T10:00:00Z",
+            bank = "Synthetic test",
+            merchant = "TESTSTORE",
+            reference = "123456789012",
+            isSynthetic = true,
+        ))
+    }
+
     @Test fun responseClassificationHandlesDuplicatesCredentialsClockSkewAndRetryableErrors() {
         assertEquals(UploadDisposition.SYNCED, UploadPolicy.classify(UploadResponse(201, false)))
         assertEquals(UploadDisposition.SYNCED, UploadPolicy.classify(UploadResponse(200, true)))
@@ -31,6 +45,13 @@ class TransactionSyncPolicyTest {
         assertEquals(UploadDisposition.RETRY, UploadPolicy.classify(UploadResponse(429, false)))
         assertEquals(UploadDisposition.RETRY, UploadPolicy.classify(UploadResponse(503, false)))
         assertEquals(UploadDisposition.FAILED, UploadPolicy.classify(UploadResponse(400, false)))
+    }
+
+    @Test fun onlyFresh201InsertIsEligibleForNewTransactionNotification() {
+        assertTrue(UploadPolicy.isNewInsertion(UploadResponse(201, false)))
+        assertFalse(UploadPolicy.isNewInsertion(UploadResponse(200, true)))
+        assertFalse(UploadPolicy.isNewInsertion(UploadResponse(201, true)))
+        assertFalse(UploadPolicy.isNewInsertion(UploadResponse(503, false)))
     }
 
     @Test fun retryBackoffGrowsAndCaps() {

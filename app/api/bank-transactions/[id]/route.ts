@@ -91,6 +91,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             category: correction.data.category ?? transaction.category,
             status: "PENDING",
             fingerprint: `${transaction.fingerprint}:correction:${randomUUID()}`,
+            isTest: transaction.isTest === true,
+            testRunId: transaction.isTest === true ? randomUUID() : undefined,
+            captureId: transaction.isTest === true ? randomUUID() : undefined,
             supersedesTransactionId: transaction._id
           }], { session });
           transaction.correctedTransactionId = corrected[0]._id;
@@ -141,7 +144,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         depositId: deposit.depositId,
         depositReference: deposit._id,
         date: transaction.timestamp,
-        bankTransactionId: transaction._id
+        bankTransactionId: transaction._id,
+        isTest: transaction.isTest === true,
       }], { session });
       const updated = await BankTransactionModel.updateOne(
         { _id: transaction._id, userId, status: "PENDING" },

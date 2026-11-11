@@ -23,6 +23,13 @@ test("transaction status model supports review, ignore, and reversal history", (
   assert.deepEqual(allowed, ["PENDING", "CONFIRMED", "IGNORED", "REVERSED"]);
 });
 
+test("synthetic E2E provenance is explicit on imported transactions and linked expenses", () => {
+  assert.equal(BankTransactionModel.schema.path("isTest").defaultValue, false);
+  assert.equal(ExpenseModel.schema.path("isTest").defaultValue, false);
+  assert.ok(BankTransactionModel.schema.path("testRunId"));
+  assert.ok(BankTransactionModel.schema.indexes().some(([keys, options]) => keys.userId === 1 && keys.testRunId === 1 && options.unique));
+});
+
 test("device model keeps only a hidden token hash and a revocation marker", () => {
   assert.equal(DeviceModel.schema.path("tokenHash").options.select, false);
   assert.ok(DeviceModel.schema.path("revokedAt"));

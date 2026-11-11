@@ -9,3 +9,9 @@ export const TransactionIngestionSchema = z.object({
   reference: z.string().trim().max(120).optional().default(""),
   timestamp: z.coerce.date()
 }).strict();
+
+/** Accepted only by the development-only E2E path after server and account checks. */
+export const E2eTransactionIngestionSchema = TransactionIngestionSchema.extend({
+  isTest: z.literal(true),
+  testRunId: z.string().uuid().transform((id) => id.toLowerCase()),
+}).strict();

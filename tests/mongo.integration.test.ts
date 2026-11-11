@@ -19,6 +19,7 @@ import { takeAuthAttempt } from "../lib/auth-throttle";
 let repl: MongoMemoryReplSet;
 let confirmRequest: typeof import("../app/api/bank-transactions/[id]/route").POST;
 let smsRequest: typeof import("../app/api/sms/route").POST;
+let e2eStatusRequest: typeof import("../app/api/sms/e2e-status/route").GET;
 let manualExpenseRequest: typeof import("../app/api/expenses/route").POST;
 let manualDepositRequest: typeof import("../app/api/deposits/route").POST;
 let updateDepositRequest: typeof import("../app/api/deposits/[id]/route").PATCH;
@@ -46,11 +47,12 @@ before(async () => {
   const systemBinary = `${process.env.MONGOMS_DOWNLOAD_DIR}/mongodb-win32-x86_64-windows-7.0.16/bin/mongod.exe`;
   if (!process.env.MONGOMS_SYSTEM_BINARY && existsSync(systemBinary)) process.env.MONGOMS_SYSTEM_BINARY = systemBinary;
   repl = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-  process.env.MONGODB_URI = repl.getUri("finance_integration_test");
-  process.env.MONGODB_DB = "finance_integration_test";
+  process.env.MONGODB_URI = repl.getUri("finance_integration_e2e");
+  process.env.MONGODB_DB = "finance_integration_e2e";
   process.env.PIN_PEPPER = "integration-test-pepper-must-be-longer-than-32-chars";
   ({ POST: confirmRequest } = await import("../app/api/bank-transactions/[id]/route"));
   ({ POST: smsRequest } = await import("../app/api/sms/route"));
+  ({ GET: e2eStatusRequest } = await import("../app/api/sms/e2e-status/route"));
   ({ POST: manualExpenseRequest } = await import("../app/api/expenses/route"));
   ({ POST: manualDepositRequest } = await import("../app/api/deposits/route"));
   ({ PATCH: updateDepositRequest, DELETE: deleteDepositRequest } = await import("../app/api/deposits/[id]/route"));
@@ -217,6 +219,122 @@ test("captureId retries are idempotent, concurrent, owner/device scoped, and leg
   assert.equal((await upload(otherToken, isolatedPayload)).status, 201);
   assert.equal(await BankTransactionModel.countDocuments({ userId: other._id, deviceId: otherDevice._id, captureId }), 1);
   assert.equal(await BankTransactionModel.countDocuments({ captureId }), 3);
+});
+
+test("local E2E ingestion requires dev mode, approved owner device, and stays test-labeled through one-time confirmation", async () => {
+  const mutableEnv = process.env as Record<string, string | undefined>;
+  const previous = {
+    nodeEnv: process.env.NODE_ENV,
+    enabled: process.env.E2E_TEST_MODE,
+    email: process.env.E2E_TEST_USER_EMAIL,
+  };
+  mutableEnv.NODE_ENV = "development";
+  process.env.E2E_TEST_MODE = "true";
+  const owner = await UserModel.findById(ownerId).lean() as unknown as { email: string };
+  process.env.E2E_TEST_USER_EMAIL = owner.email;
+  try {
+    const rawToken = createDeviceToken();
+    const device = await DeviceModel.create({ userId: ownerId, name: "Dedicated E2E emulator", tokenHash: hashDeviceToken(rawToken), status: "ACTIVE" });
+    const captureId = crypto.randomUUID();
+    const testRunId = crypto.randomUUID();
+    const payload = {
+      captureId,
+      testRunId,
+      isTest: true,
+      amount: 2.5,
+      transactionType: "DEBIT",
+      bank: "E2E TEST",
+      merchant: "E2E TESTSTORE",
+      reference: `E2E-${testRunId}`,
+      timestamp: new Date().toISOString(),
+    };
+    const upload = (token = rawToken) => smsRequest(new Request("https://local.test/api/sms", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}`, "x-device-timestamp": String(Date.now()), "x-deposit-flow-e2e": "1" },
+      body: JSON.stringify(payload),
+    }));
+
+    const statusResponse = await e2eStatusRequest(new Request("https://local.test/api/sms/e2e-status", {
+      headers: { authorization: `Bearer ${rawToken}`, "x-device-timestamp": String(Date.now()) },
+    }));
+    assert.equal(statusResponse.status, 200);
+    assert.equal((await statusResponse.json()).enabled, true);
+
+    const first = await upload();
+    assert.equal(first.status, 201);
+    const firstBody = await first.json() as { id: string; status: string; duplicate: boolean };
+    assert.equal(firstBody.status, "PENDING");
+    assert.equal(firstBody.duplicate, false);
+    const retry = await upload();
+    assert.equal(retry.status, 200);
+    assert.equal((await retry.json()).duplicate, true);
+    assert.equal(await BankTransactionModel.countDocuments({ userId: ownerId, deviceId: device._id, isTest: true, testRunId }), 1);
+    assert.equal(await BankTransactionModel.countDocuments({ isTest: false }), 0);
+
+    await deposit(100);
+    const confirmed = await confirm(firstBody.id);
+    const repeatedConfirm = await confirm(firstBody.id);
+    assert.equal(confirmed.status, 200);
+    assert.equal(repeatedConfirm.status, 200);
+    assert.equal((await repeatedConfirm.json()).alreadyConfirmed, true);
+    assert.equal(await ExpenseModel.countDocuments({ bankTransactionId: firstBody.id }), 1);
+    assert.equal((await currentDeposit())?.remainingAmount, 97.5);
+    const stored = await BankTransactionModel.findById(firstBody.id).lean() as unknown as { isTest: boolean };
+    assert.equal(stored.isTest, true);
+    const testExpense = await ExpenseModel.findOne({ bankTransactionId: firstBody.id }).lean() as unknown as { isTest: boolean };
+    assert.equal(testExpense.isTest, true);
+
+    const correction = await confirmRequest(new Request("https://local.test/api/bank-transactions", {
+      method: "POST",
+      headers: { ...authHeaders, "content-type": "application/json" },
+      body: JSON.stringify({ action: "correct", reason: "E2E test correction check", amount: 2.5, merchant: "E2E TESTSTORE", category: "Other" }),
+    }), { params: Promise.resolve({ id: firstBody.id }) });
+    assert.equal(correction.status, 200);
+    const replacement = await BankTransactionModel.findOne({ supersedesTransactionId: firstBody.id }).lean() as unknown as { isTest: boolean; testRunId: string; captureId: string };
+    assert.equal(replacement.isTest, true);
+    assert.ok(replacement.testRunId);
+    assert.ok(replacement.captureId);
+
+    const other = await UserModel.create({ name: "Other", email: `other-${crypto.randomUUID()}@test.local`, passwordHash: await hashSecret("CorrectHorse12") });
+    const otherToken = createDeviceToken();
+    await DeviceModel.create({ userId: other._id, name: "Other emulator", tokenHash: hashDeviceToken(otherToken), status: "ACTIVE" });
+    assert.equal((await upload(otherToken)).status, 403);
+    assert.equal((await e2eStatusRequest(new Request("https://local.test/api/sms/e2e-status", {
+      headers: { authorization: `Bearer ${otherToken}`, "x-device-timestamp": String(Date.now()) },
+    }))).status, 403);
+
+    await DeviceModel.updateOne({ _id: device._id }, { $set: { status: "REVOKED", revokedAt: new Date() } });
+    assert.equal((await upload()).status, 401);
+    assert.equal((await e2eStatusRequest(new Request("https://local.test/api/sms/e2e-status", {
+      headers: { authorization: `Bearer ${rawToken}`, "x-device-timestamp": String(Date.now()) },
+    }))).status, 401);
+    const noToken = await smsRequest(new Request("https://local.test/api/sms", {
+      method: "POST", headers: { "content-type": "application/json", "x-deposit-flow-e2e": "1" }, body: JSON.stringify(payload),
+    }));
+    assert.equal(noToken.status, 401);
+  } finally {
+    if (previous.nodeEnv === undefined) delete mutableEnv.NODE_ENV; else mutableEnv.NODE_ENV = previous.nodeEnv;
+    if (previous.enabled === undefined) delete process.env.E2E_TEST_MODE; else process.env.E2E_TEST_MODE = previous.enabled;
+    if (previous.email === undefined) delete process.env.E2E_TEST_USER_EMAIL; else process.env.E2E_TEST_USER_EMAIL = previous.email;
+  }
+});
+
+test("production rejects E2E-marked ingestion before any database operation", async () => {
+  const mutableEnv = process.env as Record<string, string | undefined>;
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousEnabled = process.env.E2E_TEST_MODE;
+  mutableEnv.NODE_ENV = "production";
+  process.env.E2E_TEST_MODE = "true";
+  try {
+    const response = await smsRequest(new Request("https://local.test/api/sms", {
+      method: "POST", headers: { "content-type": "application/json", "x-deposit-flow-e2e": "1" }, body: "{}",
+    }));
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).code, "E2E_DISABLED");
+  } finally {
+    if (previousNodeEnv === undefined) delete mutableEnv.NODE_ENV; else mutableEnv.NODE_ENV = previousNodeEnv;
+    if (previousEnabled === undefined) delete process.env.E2E_TEST_MODE; else process.env.E2E_TEST_MODE = previousEnabled;
+  }
 });
 
 test("correction and reversal preserve history and recalculate deposit without deleting imported expense", async () => {

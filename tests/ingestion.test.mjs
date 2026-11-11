@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { TransactionIngestionSchema } from "../lib/transaction-payload.ts";
+import { E2eTransactionIngestionSchema, TransactionIngestionSchema } from "../lib/transaction-payload.ts";
 import { getConfirmationBlock } from "../lib/confirmation-rules.ts";
+import { isConfiguredE2eEmail, isE2eTestModeEnabled, isE2eTestRequest } from "../lib/e2e-test-mode.ts";
 
 test("ingestion accepts normalized fields and rejects SMS bodies or invalid amounts", () => {
   const valid = TransactionIngestionSchema.safeParse({
@@ -31,4 +32,35 @@ test("confirmation guards require a pending debit with enough deposit balance", 
   assert.equal(getConfirmationBlock({ ...debit, transactionType: "CREDIT" }, { remainingAmount: 100 }).status, 400);
   assert.equal(getConfirmationBlock(debit, null).status, 404);
   assert.equal(getConfirmationBlock(debit, { remainingAmount: 49.99 }).status, 400);
+});
+
+test("E2E test mode fails closed outside local development and isolated databases", () => {
+  const base = {
+    NODE_ENV: "development",
+    E2E_TEST_MODE: "true",
+    E2E_TEST_USER_EMAIL: "e2e@example.test",
+    MONGODB_DB: "finance_tracker_e2e",
+    MONGODB_URI: "mongodb://127.0.0.1:27018/finance_tracker_e2e?replicaSet=rs0",
+  };
+  assert.equal(isE2eTestModeEnabled(base), true);
+  assert.equal(isE2eTestModeEnabled({ ...base, NODE_ENV: "production" }), false);
+  assert.equal(isE2eTestModeEnabled({ ...base, VERCEL_ENV: "production" }), false);
+  assert.equal(isE2eTestModeEnabled({ ...base, MONGODB_DB: "finance_tracker" }), false);
+  assert.equal(isE2eTestModeEnabled({ ...base, MONGODB_URI: "mongodb+srv://cluster.example/test" }), false);
+  assert.equal(isConfiguredE2eEmail("E2E@example.test", base), true);
+  assert.equal(isConfiguredE2eEmail("other@example.test", base), false);
+  assert.equal(isE2eTestRequest(new Request("https://local.test/api/sms", { headers: { "x-deposit-flow-e2e": "1" } })), true);
+});
+
+test("normal ingestion schema rejects test-only client flags while E2E schema requires explicit test provenance", () => {
+  const base = {
+    captureId: "89c2a858-ff40-4f3d-98f1-d6a2d2c10330",
+    amount: 2.5,
+    transactionType: "DEBIT",
+    timestamp: "2026-11-10T10:00:00Z",
+  };
+  const testFields = { ...base, isTest: true, testRunId: "89c2a858-ff40-4f3d-98f1-d6a2d2c10331" };
+  assert.equal(TransactionIngestionSchema.safeParse(testFields).success, false);
+  assert.equal(E2eTransactionIngestionSchema.safeParse(testFields).success, true);
+  assert.equal(E2eTransactionIngestionSchema.safeParse({ ...base, isTest: false, testRunId: "not-a-uuid" }).success, false);
 });
