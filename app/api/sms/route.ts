@@ -13,8 +13,12 @@ export async function POST(request: Request) {
   }
   await connectToDatabase();
   await Promise.all([DeviceModel.init(), BankTransactionModel.init()]);
+  const deviceTime = Number(request.headers.get("x-device-timestamp"));
+  if (!Number.isFinite(deviceTime) || Math.abs(Date.now() - deviceTime) > 5 * 60 * 1000) {
+    return NextResponse.json({ code: "CLOCK_SKEW", message: "Device clock is outside the accepted window." }, { status: 401 });
+  }
   const auth = await authenticateDevice(request);
-  if (!auth) return NextResponse.json({ message: "Invalid or expired device credentials." }, { status: 401 });
+  if (!auth) return NextResponse.json({ code: "DEVICE_AUTH_REQUIRED", message: "Invalid or expired device credentials." }, { status: 401 });
   if (auth.rateLimited) return NextResponse.json({ message: "Device upload limit reached. Try again later." }, { status: 429 });
 
   const body = await readJsonLimited(request, 16_384);
@@ -29,16 +33,24 @@ export async function POST(request: Request) {
   await BankTransactionModel.init();
   const fingerprint = transactionFingerprint({ ...payload.data, timestamp });
   const userId = auth.userId;
+  const deviceId = auth.device._id;
+  if (payload.data.captureId) {
+    const captured = await BankTransactionModel.findOne({ userId, deviceId, captureId: payload.data.captureId }).lean() as { _id: unknown; status: string } | null;
+    if (captured) return NextResponse.json({ id: captured._id, status: captured.status, duplicate: true });
+  }
   const existing = await BankTransactionModel.findOne({ userId, fingerprint }).lean() as { _id: unknown; status: string } | null;
   if (existing) return NextResponse.json({ id: existing._id, status: existing.status, duplicate: true });
 
   try {
-    const transaction = await BankTransactionModel.create({ ...payload.data, userId, timestamp, deviceId: auth.device._id, fingerprint, status: "PENDING" }) as { _id: unknown; status: string };
+    const transaction = await BankTransactionModel.create({ ...payload.data, userId, timestamp, deviceId, fingerprint, status: "PENDING" }) as { _id: unknown; status: string };
     return NextResponse.json({ id: transaction._id, status: transaction.status, duplicate: false }, { status: 201 });
   } catch (error) {
     if ((error as { code?: number }).code === 11000) {
-      const duplicate = await BankTransactionModel.findOne({ userId, fingerprint }).lean() as { _id: unknown; status: string } | null;
-      if (duplicate) return NextResponse.json({ id: duplicate._id, status: duplicate.status, duplicate: true });
+      const duplicate = payload.data.captureId
+        ? await BankTransactionModel.findOne({ userId, deviceId, captureId: payload.data.captureId }).lean() as { _id: unknown; status: string } | null
+        : null;
+      const fingerprintDuplicate = duplicate ?? await BankTransactionModel.findOne({ userId, fingerprint }).lean() as { _id: unknown; status: string } | null;
+      if (fingerprintDuplicate) return NextResponse.json({ id: fingerprintDuplicate._id, status: fingerprintDuplicate.status, duplicate: true });
     }
     throw error;
   }

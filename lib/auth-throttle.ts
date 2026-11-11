@@ -3,9 +3,11 @@ import { AuthThrottleModel } from "@/models/AuthThrottle";
 
 function makeKey(scope: string, input: string) { return createHash("sha256").update(`${scope}:${input}`).digest("hex"); }
 
-export async function takeAuthAttempt(scope: "login" | "register", identity: string, now = new Date()) {
+export type AuthThrottleScope = "login" | "register" | "pairing-init" | "pairing-claim";
+
+export async function takeAuthAttempt(scope: AuthThrottleScope, identity: string, now = new Date()) {
   const key = makeKey(scope, identity);
-  const max = scope === "login" ? 10 : 5;
+  const max = scope === "login" ? 10 : scope === "pairing-claim" ? 10 : 5;
   const windowMs = 15 * 60 * 1000;
   const blockedMs = 15 * 60 * 1000;
   const cutoff = new Date(now.getTime() - windowMs);

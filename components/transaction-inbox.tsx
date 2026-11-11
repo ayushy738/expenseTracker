@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { BankTransaction, Deposit, categories } from "@/types/finance";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { apiFetch } from "@/lib/client-api";
 
-type Device = { _id: string; name: string; lastUsedAt?: string; revokedAt?: string | null; createdAt: string };
+type Device = { _id: string; name: string; status?: "PENDING" | "ACTIVE" | "REVOKED"; lastUsedAt?: string; revokedAt?: string | null; createdAt: string };
 type InboxStatus = "PENDING" | "CONFIRMED" | "IGNORED" | "REVERSED";
 const inboxStatuses: InboxStatus[] = ["PENDING", "CONFIRMED", "IGNORED", "REVERSED"];
 
@@ -21,15 +21,9 @@ export function TransactionInbox() {
   const [hasMore, setHasMore] = useState(false);
   const [selectedDeposits, setSelectedDeposits] = useState<Record<string, string>>({});
   const [selectedCategories, setSelectedCategories] = useState<Record<string, string>>({});
-  const [deviceName, setDeviceName] = useState("Samsung phone");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [csrfToken, setCsrfToken] = useState("");
-
-  useEffect(() => {
-    const value = document.cookie.split("; ").find((part) => part.startsWith("finance_csrf="));
-    setCsrfToken(value?.slice("finance_csrf=".length) ?? "");
-  }, []);
+  const [pairingCode, setPairingCode] = useState<{ code: string; expiresAt: string } | null>(null);
 
   const load = useCallback(async () => {
     const [transactionResponse, depositResponse, deviceResponse] = await Promise.all([
@@ -130,6 +124,29 @@ export function TransactionInbox() {
     finally { setBusy(false); }
   }
 
+  async function startPairing(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true); setMessage(""); setPairingCode(null);
+    try {
+      const response = await apiFetch("/api/devices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.message ?? "Could not create a pairing code.");
+      setPairingCode(body);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not create a pairing code."); }
+    finally { setBusy(false); }
+  }
+
+  async function decideDevice(id: string, action: "approve" | "deny") {
+    setBusy(true); setMessage("");
+    try {
+      const response = await apiFetch(`/api/devices/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.message ?? `Could not ${action} device.`);
+      await load();
+    } catch (error) { setMessage(error instanceof Error ? error.message : `Could not ${action} device.`); }
+    finally { setBusy(false); }
+  }
+
   return (
     <section id="inbox" className="mt-8">
       <div className="mb-5">
@@ -164,10 +181,14 @@ export function TransactionInbox() {
           {transactions.length > 0 ? <div className="flex items-center justify-between"><Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</Button><span className="text-sm text-muted-foreground">Page {page}</span><Button variant="outline" size="sm" disabled={!hasMore} onClick={() => setPage((current) => current + 1)}>Next</Button></div> : null}
         </div>
         <Card className="h-fit">
-          <CardHeader><CardTitle>Companion devices</CardTitle><CardDescription>Issue and revoke phone-only upload credentials.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>Companion devices</CardTitle><CardDescription>Pair a phone with a one-time code. New devices stay pending until you approve them.</CardDescription></CardHeader>
           <CardContent className="grid gap-4">
-            <form action="/api/devices" method="POST" className="grid gap-2"><Label htmlFor="device-name">New device name</Label><input type="hidden" name="csrfToken" value={csrfToken} /><input id="device-name" name="name" value={deviceName} onChange={(event) => setDeviceName(event.target.value)} maxLength={80} className="h-10 rounded-xl border bg-background px-3 text-sm" /><Button type="submit" disabled={busy || !deviceName.trim() || !csrfToken}>Create device token</Button><p className="text-xs text-muted-foreground">A one-time plain text response shows the token without putting it in dashboard JavaScript.</p></form>
-            <div className="grid gap-2">{devices.map((device) => <div key={device._id} className="flex items-center justify-between gap-3 rounded-xl border p-3"><div><p className="font-medium">{device.name}</p><p className="text-xs text-muted-foreground">{device.revokedAt ? "Revoked" : device.lastUsedAt ? `Last used ${formatDate(device.lastUsedAt)}` : "Never connected"}</p></div>{!device.revokedAt ? <Button size="sm" variant="outline" disabled={busy} onClick={() => void revokeDevice(device._id)}>Revoke</Button> : null}</div>)}</div>
+            <form onSubmit={(event) => void startPairing(event)} className="grid gap-2"><Button type="submit" disabled={busy}>Create one-time pairing code</Button><p className="text-xs text-muted-foreground">Enter this code in the companion app. It expires in five minutes and is usable once.</p></form>
+            {pairingCode ? <div className="rounded-xl border bg-muted/40 p-4"><p className="text-xs text-muted-foreground">One-time pairing code</p><p className="my-2 font-mono text-2xl font-bold tracking-[0.2em]" aria-label="Pairing code">{pairingCode.code}</p><p className="text-xs text-muted-foreground">Expires {formatDate(pairingCode.expiresAt)}. Keep it private; anyone who uses it first can request pairing.</p></div> : null}
+            <div className="grid gap-2">{devices.map((device) => {
+              const deviceStatus = device.revokedAt ? "REVOKED" : device.status ?? "ACTIVE";
+              return <div key={device._id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3"><div><p className="font-medium">{device.name}</p><p className="text-xs text-muted-foreground">{deviceStatus === "PENDING" ? "Approval required" : deviceStatus === "REVOKED" ? "Revoked" : device.lastUsedAt ? `Last used ${formatDate(device.lastUsedAt)}` : "Approved · never connected"}</p></div>{deviceStatus === "PENDING" ? <div className="flex gap-2"><Button size="sm" disabled={busy} onClick={() => void decideDevice(device._id, "approve")}>Approve</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => void decideDevice(device._id, "deny")}>Deny</Button></div> : deviceStatus === "ACTIVE" ? <Button size="sm" variant="outline" disabled={busy} onClick={() => void revokeDevice(device._id)}>Revoke</Button> : null}</div>;
+            })}</div>
           </CardContent>
         </Card>
       </div>

@@ -26,6 +26,8 @@ test("transaction status model supports review, ignore, and reversal history", (
 test("device model keeps only a hidden token hash and a revocation marker", () => {
   assert.equal(DeviceModel.schema.path("tokenHash").options.select, false);
   assert.ok(DeviceModel.schema.path("revokedAt"));
+  assert.deepEqual(DeviceModel.schema.path("status").enumValues, ["PENDING", "ACTIVE", "REVOKED"]);
+  assert.equal(DeviceModel.schema.path("status").defaultValue, "PENDING");
 });
 
 test("all user-owned finance and device models require owner references and use owner-scoped uniqueness", () => {

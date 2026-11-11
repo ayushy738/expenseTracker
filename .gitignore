@@ -28,3 +28,10 @@ Thumbs.db
 # editor
 .vscode/
 .idea/
+
+# Android local build configuration
+local.properties
+.gradle/
+captures/
+*.jks
+*.keystore

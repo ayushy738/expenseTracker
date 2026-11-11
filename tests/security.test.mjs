@@ -4,6 +4,7 @@ import { createDeviceToken, hashDeviceToken } from "../lib/device-token.ts";
 import { transactionFingerprint } from "../lib/transaction-fingerprint.ts";
 import { readJsonLimited } from "../lib/request-body.ts";
 import { resolveDatabaseName } from "../lib/mongodb.ts";
+import { createPairingCode, hashPairingCode, normalizePairingCode, pairingChallengeExpiry } from "../lib/device-pairing.ts";
 
 test("device tokens are random bearer secrets and only their hashes are stored", () => {
   const token = createDeviceToken();
@@ -11,6 +12,15 @@ test("device tokens are random bearer secrets and only their hashes are stored",
   assert.notEqual(hashDeviceToken(token), token);
   assert.equal(hashDeviceToken(token), hashDeviceToken(token));
   assert.notEqual(createDeviceToken(), token);
+});
+
+test("pairing challenges use a short random code, normalize consistently, and expire after five minutes", () => {
+  const code = createPairingCode();
+  assert.match(code, /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{10}$/);
+  assert.equal(hashPairingCode(code), hashPairingCode(` ${code.slice(0, 5)}-${code.slice(5)} `));
+  assert.notEqual(hashPairingCode(code), code);
+  assert.equal(pairingChallengeExpiry(new Date(0)).getTime(), 5 * 60 * 1000);
+  assert.equal(normalizePairingCode(" abcd-2345 "), "ABCD2345");
 });
 
 test("transaction fingerprints are stable for bank references and distinguish amounts", () => {

@@ -7,6 +7,7 @@ import { DepositModel } from "../models/Deposit";
 import { ExpenseModel } from "../models/Expense";
 import { BankTransactionModel } from "../models/BankTransaction";
 import { DeviceModel } from "../models/Device";
+import { DevicePairingChallengeModel } from "../models/DevicePairingChallenge";
 import { createDeviceToken, hashDeviceToken } from "../lib/device-token";
 import { UserModel } from "../models/User";
 import { UserSessionModel } from "../models/UserSession";
@@ -31,6 +32,11 @@ let pinSetupRequest: typeof import("../app/api/auth/pin/route").PUT;
 let pinUnlockRequest: typeof import("../app/api/auth/pin/unlock/route").POST;
 let changePasswordRequest: typeof import("../app/api/auth/password/route").PUT;
 let revokeDeviceRequest: typeof import("../app/api/devices/[id]/route").DELETE;
+let updateDeviceRequest: typeof import("../app/api/devices/[id]/route").PATCH;
+let devicesRequest: typeof import("../app/api/devices/route").POST;
+let claimDeviceRequest: typeof import("../app/api/device-pairings/claim/route").POST;
+let deviceStatusRequest: typeof import("../app/api/device/status/route").GET;
+let deviceDisconnectRequest: typeof import("../app/api/device/disconnect/route").POST;
 let ownerId: mongoose.Types.ObjectId;
 let authHeaders: Record<string, string>;
 
@@ -57,8 +63,13 @@ before(async () => {
   ({ POST: pinUnlockRequest } = await import("../app/api/auth/pin/unlock/route"));
   ({ PUT: changePasswordRequest } = await import("../app/api/auth/password/route"));
   ({ DELETE: revokeDeviceRequest } = await import("../app/api/devices/[id]/route"));
+  ({ PATCH: updateDeviceRequest } = await import("../app/api/devices/[id]/route"));
+  ({ POST: devicesRequest } = await import("../app/api/devices/route"));
+  ({ POST: claimDeviceRequest } = await import("../app/api/device-pairings/claim/route"));
+  ({ GET: deviceStatusRequest } = await import("../app/api/device/status/route"));
+  ({ POST: deviceDisconnectRequest } = await import("../app/api/device/disconnect/route"));
   await mongoose.connect(process.env.MONGODB_URI);
-  await Promise.all([UserModel.init(), UserSessionModel.init(), AuthThrottleModel.init(), DepositModel.init(), ExpenseModel.init(), BankTransactionModel.init(), DeviceModel.init()]);
+  await Promise.all([UserModel.init(), UserSessionModel.init(), AuthThrottleModel.init(), DepositModel.init(), ExpenseModel.init(), BankTransactionModel.init(), DeviceModel.init(), DevicePairingChallengeModel.init()]);
 });
 
 after(async () => {
@@ -67,7 +78,7 @@ after(async () => {
 });
 
 beforeEach(async () => {
-  await Promise.all([DepositModel.deleteMany({}), ExpenseModel.deleteMany({}), BankTransactionModel.deleteMany({}), DeviceModel.deleteMany({}), UserSessionModel.deleteMany({}), UserModel.deleteMany({}), AuthThrottleModel.deleteMany({})]);
+  await Promise.all([DepositModel.deleteMany({}), ExpenseModel.deleteMany({}), BankTransactionModel.deleteMany({}), DeviceModel.deleteMany({}), DevicePairingChallengeModel.deleteMany({}), UserSessionModel.deleteMany({}), UserModel.deleteMany({}), AuthThrottleModel.deleteMany({})]);
   const owner = await UserModel.create({ name: "Owner", email: `owner-${crypto.randomUUID()}@test.local`, passwordHash: await hashSecret("CorrectHorse12") });
   ownerId = owner._id;
   const token = createOpaqueToken();
@@ -88,7 +99,7 @@ async function currentTransaction(id: unknown) {
 }
 
 async function importedTransaction(amount: number, fingerprint = `fp-${crypto.randomUUID()}`) {
-  const device = await DeviceModel.create({ userId: ownerId, name: "Integration", tokenHash: hashDeviceToken(createDeviceToken()) });
+  const device = await DeviceModel.create({ userId: ownerId, name: "Integration", tokenHash: hashDeviceToken(createDeviceToken()), status: "ACTIVE" });
   return BankTransactionModel.create({ userId: ownerId, amount, transactionType: "DEBIT", merchant: "Test merchant", timestamp: new Date(), deviceId: device._id, fingerprint, status: "PENDING" });
 }
 
@@ -96,6 +107,23 @@ async function confirm(id: unknown) {
   return confirmRequest(new Request(`https://local.test/api/bank-transactions/${id}`, {
     method: "POST", headers: { ...authHeaders, "content-type": "application/json" }, body: JSON.stringify({ action: "confirm", depositId: "DEP-001", category: "Other" })
   }), { params: Promise.resolve({ id: String(id) }) });
+}
+
+async function startPairing() {
+  const response = await devicesRequest(new Request("https://local.test/api/devices", {
+    method: "POST", headers: { ...authHeaders, "content-type": "application/json" }, body: JSON.stringify({})
+  }));
+  return { response, body: await response.json() as { code: string; expiresAt: string } };
+}
+
+function claimPairing(code: string, deviceToken = createDeviceToken(), deviceName = "Samsung") {
+  return {
+    deviceToken,
+    request: () => claimDeviceRequest(new Request("https://local.test/api/device-pairings/claim", {
+      method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "198.51.100.50" },
+      body: JSON.stringify({ code, deviceName, deviceToken })
+    }))
+  };
 }
 
 test("simultaneous confirmation of one bank transaction creates one expense and charges once", async () => {
@@ -147,7 +175,7 @@ test("deposit recalculation failure rolls back expense, transaction, and balance
 
 test("duplicate ingestion returns existing item; retries do not create another record; revocation blocks later uploads", async () => {
   const rawToken = createDeviceToken();
-  const device = await DeviceModel.create({ userId: ownerId, name: "Phone", tokenHash: hashDeviceToken(rawToken) });
+  const device = await DeviceModel.create({ userId: ownerId, name: "Phone", tokenHash: hashDeviceToken(rawToken), status: "ACTIVE" });
   const input = { amount: 12.5, transactionType: "DEBIT", bank: "Example", reference: "R-1", merchant: "Shop", timestamp: new Date().toISOString() };
   const upload = () => smsRequest(new Request("https://local.test/api/sms", {
     method: "POST", headers: { ...authHeaders, "content-type": "application/json", authorization: `Bearer ${rawToken}`, "x-device-timestamp": String(Date.now()) }, body: JSON.stringify(input)
@@ -160,6 +188,35 @@ test("duplicate ingestion returns existing item; retries do not create another r
   await DeviceModel.updateOne({ _id: device._id }, { $set: { revokedAt: new Date() } });
   assert.equal((await upload()).status, 401);
   assert.equal(await BankTransactionModel.countDocuments(), 1);
+});
+
+test("captureId retries are idempotent, concurrent, owner/device scoped, and legacy clients still work", async () => {
+  const firstToken = createDeviceToken();
+  const firstDevice = await DeviceModel.create({ userId: ownerId, name: "First phone", tokenHash: hashDeviceToken(firstToken), status: "ACTIVE" });
+  const captureId = crypto.randomUUID();
+  const upload = (token: string, payload: object) => smsRequest(new Request("https://local.test/api/sms", {
+    method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}`, "x-device-timestamp": String(Date.now()) }, body: JSON.stringify(payload)
+  }));
+  const payload = { captureId, amount: 45.5, transactionType: "DEBIT", bank: "Example", timestamp: new Date().toISOString() };
+  const [first, concurrent] = await Promise.all([upload(firstToken, payload), upload(firstToken, payload)]);
+  assert.deepEqual([first.status, concurrent.status].sort(), [200, 201]);
+  assert.equal(await BankTransactionModel.countDocuments({ userId: ownerId, deviceId: firstDevice._id, captureId }), 1);
+  const retry = await upload(firstToken, payload);
+  assert.equal(retry.status, 200);
+  assert.equal((await retry.json()).duplicate, true);
+
+  const secondToken = createDeviceToken();
+  const secondDevice = await DeviceModel.create({ userId: ownerId, name: "Second phone", tokenHash: hashDeviceToken(secondToken), status: "ACTIVE" });
+  assert.equal((await upload(secondToken, { ...payload, amount: 45.51 })).status, 201);
+  assert.equal(await BankTransactionModel.countDocuments({ userId: ownerId, captureId }), 2);
+
+  const other = await UserModel.create({ name: "Other", email: `capture-${crypto.randomUUID()}@test.local`, passwordHash: await hashSecret("CorrectHorse12") });
+  const otherToken = createDeviceToken();
+  const otherDevice = await DeviceModel.create({ userId: other._id, name: "Other phone", tokenHash: hashDeviceToken(otherToken), status: "ACTIVE" });
+  const isolatedPayload = { ...payload, amount: 45.51 };
+  assert.equal((await upload(otherToken, isolatedPayload)).status, 201);
+  assert.equal(await BankTransactionModel.countDocuments({ userId: other._id, deviceId: otherDevice._id, captureId }), 1);
+  assert.equal(await BankTransactionModel.countDocuments({ captureId }), 3);
 });
 
 test("correction and reversal preserve history and recalculate deposit without deleting imported expense", async () => {
@@ -347,13 +404,13 @@ test("finance reads and relationships are isolated to the authenticated user", a
 
 test("a user cannot revoke another user's device and SMS ownership comes from its token", async () => {
   const other = await UserModel.create({ name: "Other", email: `device-${crypto.randomUUID()}@test.local`, passwordHash: await hashSecret("CorrectHorse12") });
-  const otherDevice = await DeviceModel.create({ userId: other._id, name: "Other phone", tokenHash: hashDeviceToken(createDeviceToken()) });
+  const otherDevice = await DeviceModel.create({ userId: other._id, name: "Other phone", tokenHash: hashDeviceToken(createDeviceToken()), status: "ACTIVE" });
   const denied = await revokeDeviceRequest(new Request(`https://local.test/api/devices/${otherDevice._id}`, { method: "DELETE", headers: authHeaders }), { params: Promise.resolve({ id: String(otherDevice._id) }) });
   assert.equal(denied.status, 404);
   assert.equal((await DeviceModel.findById(otherDevice._id))?.revokedAt, null);
 
   const rawToken = createDeviceToken();
-  await DeviceModel.create({ userId: ownerId, name: "Owned phone", tokenHash: hashDeviceToken(rawToken) });
+  await DeviceModel.create({ userId: ownerId, name: "Owned phone", tokenHash: hashDeviceToken(rawToken), status: "ACTIVE" });
   const spoofed = await smsRequest(new Request("https://local.test/api/sms", {
     method: "POST", headers: { authorization: `Bearer ${rawToken}`, "x-device-timestamp": String(Date.now()), "content-type": "application/json" },
     body: JSON.stringify({ amount: 4, transactionType: "DEBIT", timestamp: new Date().toISOString(), userId: String(other._id) })
@@ -366,6 +423,127 @@ test("a user cannot revoke another user's device and SMS ownership comes from it
   assert.equal(upload.status, 201);
   const imported = await BankTransactionModel.findOne({});
   assert.equal(String(imported?.userId), String(ownerId));
+});
+
+test("pairing challenge expires after five minutes and cannot be claimed", async () => {
+  const { response, body } = await startPairing();
+  assert.equal(response.status, 201);
+  assert.equal(body.code.length, 10);
+  const stored = await DevicePairingChallengeModel.findOne({ userId: ownerId }).select("+codeHash");
+  assert.ok(stored);
+  assert.notEqual(stored.codeHash, body.code);
+  await DevicePairingChallengeModel.updateOne({ _id: stored._id }, { $set: { expiresAt: new Date(Date.now() - 1) } });
+  const claim = claimPairing(body.code);
+  assert.equal((await claim.request()).status, 410);
+  assert.equal(await DeviceModel.countDocuments(), 0);
+});
+
+test("pairing code is single use and a lost-response retry with the same token is idempotent", async () => {
+  const { body } = await startPairing();
+  const claim = claimPairing(body.code);
+  const first = await claim.request();
+  const retry = await claim.request();
+  assert.equal(first.status, 201);
+  assert.equal(retry.status, 200);
+  assert.equal((await retry.json()).duplicate, true);
+  assert.equal(await DeviceModel.countDocuments({ userId: ownerId }), 1);
+  const second = claimPairing(body.code);
+  assert.equal((await second.request()).status, 409);
+  assert.equal(await DeviceModel.countDocuments({ userId: ownerId }), 1);
+});
+
+test("Android claim rejects client-supplied user ownership", async () => {
+  const { body } = await startPairing();
+  const claim = claimPairing(body.code);
+  const response = await claimDeviceRequest(new Request("https://local.test/api/device-pairings/claim", {
+    method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "198.51.100.51" },
+    body: JSON.stringify({ code: body.code, deviceName: "Samsung", deviceToken: claim.deviceToken, userId: "000000000000000000000000" })
+  }));
+  assert.equal(response.status, 400);
+  assert.equal(await DeviceModel.countDocuments(), 0);
+});
+
+test("concurrent claims of one challenge create exactly one device", async () => {
+  const { body } = await startPairing();
+  const first = claimPairing(body.code);
+  const second = claimPairing(body.code);
+  const responses = await Promise.all([first.request(), second.request()]);
+  assert.equal(responses.filter(response => response.status === 201).length, 1);
+  assert.equal(responses.filter(response => response.status === 409).length, 1);
+  assert.equal(await DeviceModel.countDocuments({ userId: ownerId }), 1);
+});
+
+test("device claim is pending until the owner approves and foreign owners cannot manage it", async () => {
+  const { body } = await startPairing();
+  const claim = claimPairing(body.code);
+  const claimed = await claim.request();
+  assert.equal(claimed.status, 201);
+  const device = await DeviceModel.findOne({ userId: ownerId });
+  assert.equal(device?.status, "PENDING");
+
+  const other = await UserModel.create({ name: "Other", email: `pair-${crypto.randomUUID()}@test.local`, passwordHash: await hashSecret("CorrectHorse12") });
+  const foreignToken = createOpaqueToken();
+  await UserSessionModel.create({ userId: other._id, tokenHash: digestToken(foreignToken), expiresAt: new Date(Date.now() + 86_400_000), pinUnlockedUntil: new Date(Date.now() + 86_400_000) });
+  const foreignHeaders = { cookie: `finance_session=${foreignToken}; finance_csrf=foreign-csrf`, "x-csrf-token": "foreign-csrf", origin: "https://local.test", host: "local.test", "x-forwarded-proto": "https", "content-type": "application/json" };
+  const forbidden = await updateDeviceRequest(new Request(`https://local.test/api/devices/${device?._id}`, { method: "PATCH", headers: foreignHeaders, body: JSON.stringify({ action: "approve" }) }), { params: Promise.resolve({ id: String(device?._id) }) });
+  assert.equal(forbidden.status, 404);
+
+  const deniedBeforeApproval = await smsRequest(new Request("https://local.test/api/sms", {
+    method: "POST", headers: { authorization: `Bearer ${claim.deviceToken}`, "x-device-timestamp": String(Date.now()), "content-type": "application/json" },
+    body: JSON.stringify({ amount: 8, transactionType: "DEBIT", timestamp: new Date().toISOString() })
+  }));
+  assert.equal(deniedBeforeApproval.status, 401);
+
+  const approved = await updateDeviceRequest(new Request(`https://local.test/api/devices/${device?._id}`, { method: "PATCH", headers: { ...authHeaders, "content-type": "application/json" }, body: JSON.stringify({ action: "approve" }) }), { params: Promise.resolve({ id: String(device?._id) }) });
+  assert.equal(approved.status, 200);
+  assert.equal((await DeviceModel.findById(device?._id))?.status, "ACTIVE");
+  const status = await deviceStatusRequest(new Request("https://local.test/api/device/status", { headers: { authorization: `Bearer ${claim.deviceToken}`, "x-device-timestamp": String(Date.now()) } }));
+  assert.deepEqual(await status.json(), { status: "ACTIVE" });
+});
+
+test("denied and revoked devices cannot ingest; device can self-disconnect and observe revocation", async () => {
+  const { body } = await startPairing();
+  const claim = claimPairing(body.code);
+  await claim.request();
+  const device = await DeviceModel.findOne({ userId: ownerId });
+  const denied = await updateDeviceRequest(new Request(`https://local.test/api/devices/${device?._id}`, { method: "PATCH", headers: { ...authHeaders, "content-type": "application/json" }, body: JSON.stringify({ action: "deny" }) }), { params: Promise.resolve({ id: String(device?._id) }) });
+  assert.equal(denied.status, 200);
+  assert.equal((await deviceStatusRequest(new Request("https://local.test/api/device/status", { headers: { authorization: `Bearer ${claim.deviceToken}`, "x-device-timestamp": String(Date.now()) } }))).status, 200);
+  const state = await deviceStatusRequest(new Request("https://local.test/api/device/status", { headers: { authorization: `Bearer ${claim.deviceToken}`, "x-device-timestamp": String(Date.now()) } }));
+  assert.deepEqual(await state.json(), { status: "REVOKED" });
+  const upload = await smsRequest(new Request("https://local.test/api/sms", {
+    method: "POST", headers: { authorization: `Bearer ${claim.deviceToken}`, "x-device-timestamp": String(Date.now()), "content-type": "application/json" },
+    body: JSON.stringify({ amount: 8, transactionType: "DEBIT", timestamp: new Date().toISOString() })
+  }));
+  assert.equal(upload.status, 401);
+  assert.equal(await BankTransactionModel.countDocuments(), 0);
+});
+
+test("device self-disconnect revokes an active credential", async () => {
+  const token = createDeviceToken();
+  const device = await DeviceModel.create({ userId: ownerId, name: "Self disconnect", tokenHash: hashDeviceToken(token), status: "ACTIVE" });
+  const headers = { authorization: `Bearer ${token}`, "x-device-timestamp": String(Date.now()) };
+  const disconnected = await deviceDisconnectRequest(new Request("https://local.test/api/device/disconnect", { method: "POST", headers }));
+  assert.deepEqual(await disconnected.json(), { status: "REVOKED" });
+  assert.equal((await DeviceModel.findById(device._id))?.status, "REVOKED");
+  assert.equal((await deviceStatusRequest(new Request("https://local.test/api/device/status", { headers }))).status, 200);
+});
+
+test("dashboard owner revocation blocks the device token while another user cannot revoke it", async () => {
+  const token = createDeviceToken();
+  const device = await DeviceModel.create({ userId: ownerId, name: "Owner phone", tokenHash: hashDeviceToken(token), status: "ACTIVE" });
+  const other = await UserModel.create({ name: "Other", email: `revoke-${crypto.randomUUID()}@test.local`, passwordHash: await hashSecret("CorrectHorse12") });
+  const otherToken = createOpaqueToken();
+  await UserSessionModel.create({ userId: other._id, tokenHash: digestToken(otherToken), expiresAt: new Date(Date.now() + 86_400_000), pinUnlockedUntil: new Date(Date.now() + 86_400_000) });
+  const foreignHeaders = { cookie: `finance_session=${otherToken}; finance_csrf=foreign-csrf`, "x-csrf-token": "foreign-csrf", origin: "https://local.test", host: "local.test", "x-forwarded-proto": "https" };
+  assert.equal((await revokeDeviceRequest(new Request(`https://local.test/api/devices/${device._id}`, { method: "DELETE", headers: foreignHeaders }), { params: Promise.resolve({ id: String(device._id) }) })).status, 404);
+  assert.equal((await revokeDeviceRequest(new Request(`https://local.test/api/devices/${device._id}`, { method: "DELETE", headers: authHeaders }), { params: Promise.resolve({ id: String(device._id) }) })).status, 200);
+
+  const deviceHeaders = { authorization: `Bearer ${token}`, "x-device-timestamp": String(Date.now()) };
+  const status = await deviceStatusRequest(new Request("https://local.test/api/device/status", { headers: deviceHeaders }));
+  assert.deepEqual(await status.json(), { status: "REVOKED" });
+  const disconnect = await deviceDisconnectRequest(new Request("https://local.test/api/device/disconnect", { method: "POST", headers: deviceHeaders }));
+  assert.deepEqual(await disconnect.json(), { status: "REVOKED" });
 });
 
 test("login throttling blocks after the limit and expires using a controllable clock", async () => {

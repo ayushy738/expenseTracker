@@ -12,6 +12,7 @@ const BankTransactionSchema = new Schema(
     reference: { type: String, trim: true, maxlength: 120, default: "" },
     timestamp: { type: Date, required: true },
     deviceId: { type: Schema.Types.ObjectId, ref: "Device", required: true },
+    captureId: { type: String, match: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i },
     depositId: { type: String, index: true },
     category: { type: String, default: "Other" },
     status: { type: String, enum: ["PENDING", "CONFIRMED", "IGNORED", "REVERSED"], default: "PENDING" },
@@ -25,6 +26,10 @@ const BankTransactionSchema = new Schema(
 );
 
 BankTransactionSchema.index({ userId: 1, fingerprint: 1 }, { unique: true });
+BankTransactionSchema.index(
+  { userId: 1, deviceId: 1, captureId: 1 },
+  { unique: true, partialFilterExpression: { captureId: { $type: "string" } } }
+);
 BankTransactionSchema.index({ userId: 1, status: 1, timestamp: -1, _id: -1 });
 
 export const BankTransactionModel = models.BankTransaction || mongoose.model("BankTransaction", BankTransactionSchema);

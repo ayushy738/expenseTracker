@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const TransactionIngestionSchema = z.object({
+  captureId: z.string().uuid().transform((captureId) => captureId.toLowerCase()).optional(),
   amount: z.number().positive().max(1_000_000_000).refine((amount) => Math.abs(amount * 100 - Math.round(amount * 100)) < 1e-7, "Amount must use at most two decimal places."),
   transactionType: z.enum(["DEBIT", "CREDIT"]),
   bank: z.string().trim().max(100).optional().default(""),
