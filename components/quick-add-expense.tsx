@@ -20,6 +20,7 @@ export function QuickAddExpense({ userId }: { userId: string }) {
   const [amount, setAmount] = useState("");
   const [selectedDepositId, setSelectedDepositId] = useState("");
   const [depositQuery, setDepositQuery] = useState("");
+  const [depositPickerOpen, setDepositPickerOpen] = useState(false);
   const [category, setCategory] = useState<ExpenseCategory>("Food");
   const [description, setDescription] = useState("");
   const [expenseDate, setExpenseDate] = useState("");
@@ -27,6 +28,7 @@ export function QuickAddExpense({ userId }: { userId: string }) {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState<ExpenseResult | null>(null);
   const [updatedRemaining, setUpdatedRemaining] = useState<number | null>(null);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const submissionLock = useRef(false);
   const amountRef = useRef<HTMLInputElement>(null);
 
@@ -69,6 +71,21 @@ export function QuickAddExpense({ userId }: { userId: string }) {
     void loadDeposits();
     return () => { cancelled = true; };
   }, [userId]);
+
+  useEffect(() => {
+    const visualViewport = window.visualViewport;
+    if (!visualViewport) return;
+    const updateInset = () => setKeyboardInset(Math.max(0, Math.round(window.innerHeight - visualViewport.height - visualViewport.offsetTop)));
+    updateInset();
+    visualViewport.addEventListener("resize", updateInset);
+    visualViewport.addEventListener("scroll", updateInset);
+    window.addEventListener("resize", updateInset);
+    return () => {
+      visualViewport.removeEventListener("resize", updateInset);
+      visualViewport.removeEventListener("scroll", updateInset);
+      window.removeEventListener("resize", updateInset);
+    };
+  }, []);
 
   async function saveExpense(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -158,27 +175,33 @@ export function QuickAddExpense({ userId }: { userId: string }) {
     </CardContent></Card>;
   }
 
-  return <div className="mx-auto w-full max-w-xl">
-    <div className="mb-4"><Button variant="ghost" size="sm" asChild><Link href="/expenses"><ChevronLeft className="h-4 w-4" />Expenses</Link></Button><h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">Quick add expense</h1><p className="mt-1 text-sm text-muted-foreground">Record it once. We’ll charge the deposit you choose.</p></div>
-    <form onSubmit={(event) => void saveExpense(event)} className="grid gap-4">
-      <Card><CardContent className="grid gap-2 p-4 sm:p-5"><Label htmlFor="quick-amount">Amount</Label><div className="flex items-center rounded-2xl border bg-background/60 px-4 focus-within:ring-2 focus-within:ring-ring"><span className="text-3xl font-semibold text-muted-foreground" aria-hidden="true">₹</span><input ref={amountRef} id="quick-amount" name="amount" type="text" inputMode="decimal" autoComplete="off" placeholder="0.00" aria-describedby="quick-amount-hint" value={amount} onChange={(event) => setAmount(event.target.value)} className="h-20 min-w-0 flex-1 bg-transparent px-3 text-4xl font-bold tabular-nums outline-none placeholder:text-muted-foreground/50 sm:text-5xl" required /><span className="sr-only" id="quick-amount-hint">Enter rupees and up to two paise digits.</span></div>{amount && amountPaise === null ? <p className="text-sm text-destructive" role="alert">Enter a valid amount using up to two decimal places.</p> : null}</CardContent></Card>
+  return <div className="mx-auto w-full max-w-xl min-w-0 overflow-x-clip">
+    <div className="mb-3 sm:mb-4"><Button variant="ghost" size="sm" className="-ml-2 min-h-11 px-2" asChild><Link href="/expenses"><ChevronLeft className="h-4 w-4" />Expenses</Link></Button><h1 className="mt-1 text-xl font-bold tracking-tight sm:text-3xl">Quick add expense</h1><p className="mt-1 text-sm text-muted-foreground">Record it once. We’ll charge the deposit you choose.</p></div>
+    <form onSubmit={(event) => void saveExpense(event)} className="grid gap-3 sm:gap-4">
+      <Card><CardContent className="grid gap-2 p-3 sm:p-5"><Label htmlFor="quick-amount">Amount</Label><div className="flex min-w-0 items-center rounded-2xl border bg-background/60 px-3 focus-within:ring-2 focus-within:ring-ring sm:px-4"><span className="shrink-0 text-3xl font-semibold text-muted-foreground" aria-hidden="true">₹</span><input ref={amountRef} id="quick-amount" name="amount" type="text" inputMode="decimal" autoComplete="off" placeholder="0.00" aria-describedby="quick-amount-hint" value={amount} onChange={(event) => setAmount(event.target.value)} className="h-16 min-w-0 flex-1 bg-transparent px-2 text-[clamp(2.25rem,10vw,3.5rem)] font-bold tabular-nums outline-none placeholder:text-muted-foreground/50 sm:h-20 sm:px-3" required /><span className="sr-only" id="quick-amount-hint">Enter rupees and up to two paise digits.</span></div>{amount && amountPaise === null ? <p className="text-sm text-destructive" role="alert">Enter a valid amount using up to two decimal places.</p> : null}</CardContent></Card>
 
-      <Card><CardContent className="grid gap-3 p-4 sm:p-5"><div className="flex items-center justify-between gap-2"><Label>Deposit</Label>{selectedDeposit ? <span className="text-xs font-medium text-muted-foreground">{paiseToCurrency(Math.round(selectedDeposit.remainingAmount * 100))} left</span> : null}</div>
-        {eligible.length > 1 ? <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" /><Input aria-label="Search eligible deposits" placeholder="Search deposits" value={depositQuery} onChange={(event) => setDepositQuery(event.target.value)} className="pl-9" /></div> : null}
-        <div className="grid max-h-52 gap-2 overflow-y-auto" role="group" aria-label="Choose a deposit">{searchableDeposits.map((deposit) => {
-          const active = selectedDepositId === deposit.depositId;
-          return <button key={deposit.depositId} type="button" aria-pressed={active} onClick={() => { setSelectedDepositId(deposit.depositId); setDepositQuery(""); }} className={`flex min-h-14 items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-colors ${active ? "border-primary bg-primary/8 ring-1 ring-primary" : "bg-background/50 hover:bg-muted/60"}`}><span className="min-w-0"><span className="block truncate text-sm font-semibold">{deposit.source}</span><span className="block text-xs text-muted-foreground">{deposit.depositId}</span></span><span className="shrink-0 text-right text-sm font-medium tabular-nums">{paiseToCurrency(Math.round(deposit.remainingAmount * 100))}<span className="block text-xs text-muted-foreground">remaining</span></span></button>;
-        })}{searchableDeposits.length === 0 ? <p className="py-3 text-sm text-muted-foreground">No matching eligible deposits.</p> : null}</div>
+      <Card><CardContent className="grid gap-2.5 p-3 sm:gap-3 sm:p-5"><div className="flex items-center justify-between gap-2"><Label>Deposit</Label>{selectedDeposit ? <span className="text-xs font-medium text-muted-foreground">{paiseToCurrency(Math.round(selectedDeposit.remainingAmount * 100))} left</span> : null}</div>
+        {selectedDeposit ? <button type="button" aria-expanded={depositPickerOpen} onClick={() => setDepositPickerOpen((open) => !open)} className={`flex min-h-14 w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left ${depositPickerOpen ? "border-primary bg-primary/8 ring-1 ring-primary" : "bg-background/50"}`}><span className="min-w-0"><span className="block truncate text-sm font-semibold">{selectedDeposit.source}</span><span className="block text-xs text-muted-foreground">{selectedDeposit.depositId}</span></span><span className="shrink-0 text-right text-sm font-medium tabular-nums">{paiseToCurrency(Math.round(selectedDeposit.remainingAmount * 100))}<span className="block text-xs text-muted-foreground">remaining</span></span>{eligible.length > 1 ? <span className="shrink-0 rounded-lg px-2 py-2 text-sm font-semibold text-primary">{depositPickerOpen ? "Done" : "Change"}</span> : null}</button> : null}
+        {depositPickerOpen || !selectedDeposit ? <>
+          {eligible.length > 4 ? <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" /><Input aria-label="Search eligible deposits" placeholder="Search deposits" value={depositQuery} onChange={(event) => setDepositQuery(event.target.value)} className="min-h-11 pl-9" /></div> : null}
+          <div className="grid max-h-40 gap-2 overflow-y-auto overscroll-contain" role="group" aria-label="Choose a deposit">{searchableDeposits.map((deposit) => {
+            const active = selectedDepositId === deposit.depositId;
+            return <button key={deposit.depositId} type="button" aria-pressed={active} onClick={() => { setSelectedDepositId(deposit.depositId); setDepositQuery(""); setDepositPickerOpen(false); }} className={`flex min-h-12 items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left transition-colors ${active ? "border-primary bg-primary/8 ring-1 ring-primary" : "bg-background/50 hover:bg-muted/60"}`}><span className="min-w-0"><span className="block truncate text-sm font-semibold">{deposit.source}</span><span className="block text-xs text-muted-foreground">{deposit.depositId}</span></span><span className="shrink-0 text-right text-sm font-medium tabular-nums">{paiseToCurrency(Math.round(deposit.remainingAmount * 100))}<span className="block text-xs text-muted-foreground">remaining</span></span></button>;
+          })}{searchableDeposits.length === 0 ? <p className="py-3 text-sm text-muted-foreground">No matching eligible deposits.</p> : null}</div>
+        </> : null}
       </CardContent></Card>
 
-      <Card><CardContent className="grid gap-3 p-4 sm:p-5"><Label>Category</Label><div className="grid grid-cols-3 gap-2">{categories.map((item) => <button key={item} type="button" aria-pressed={category === item} onClick={() => setCategory(item)} className={`min-h-11 rounded-xl border px-2 text-sm font-medium ${category === item ? "border-primary bg-primary/10 text-primary" : "bg-background/50 hover:bg-muted/60"}`}>{item}</button>)}</div></CardContent></Card>
+      <Card><CardContent className="grid gap-2.5 p-3 sm:gap-3 sm:p-5"><Label>Category</Label><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{categories.map((item) => <button key={item} type="button" aria-pressed={category === item} onClick={() => setCategory(item)} className={`min-h-11 min-w-0 rounded-xl border px-2 text-sm font-medium ${category === item ? "border-primary bg-primary/10 text-primary" : "bg-background/50 hover:bg-muted/60"}`}>{item}</button>)}</div></CardContent></Card>
 
-      <details className="rounded-2xl border bg-background/40 px-4 py-3"><summary className="cursor-pointer text-sm font-medium">Date and note <span className="text-muted-foreground">· optional</span></summary><div className="mt-3 grid gap-3 sm:grid-cols-2"><div className="grid gap-1.5"><Label htmlFor="quick-date">Expense date</Label><Input id="quick-date" type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /></div><div className="grid gap-1.5"><Label htmlFor="quick-note">Note</Label><Input id="quick-note" maxLength={240} placeholder="Optional" value={description} onChange={(event) => setDescription(event.target.value)} /></div></div></details>
+      <details className="rounded-2xl border bg-background/40 px-3 py-2.5"><summary className="min-h-11 cursor-pointer py-2 text-sm font-medium">Date and note <span className="text-muted-foreground">· optional</span></summary><div className="mt-2 grid gap-3 sm:grid-cols-2"><div className="grid gap-1.5"><Label htmlFor="quick-date">Expense date</Label><Input id="quick-date" type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} className="min-h-11" /></div><div className="grid gap-1.5"><Label htmlFor="quick-note">Note</Label><Input id="quick-note" maxLength={240} placeholder="Optional" value={description} onChange={(event) => setDescription(event.target.value)} className="min-h-11" /></div></div></details>
 
       {exceedsBalance ? <p className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">This deposit does not have enough remaining balance.</p> : null}
       {error ? <div className="grid gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert"><p>{error}</p>{error.includes("Sign in again") ? <Link className="font-semibold underline" href="/login">Sign in</Link> : error.includes("Unlock it") ? <Link className="font-semibold underline" href="/unlock">Unlock session</Link> : null}</div> : null}
-      <Button type="submit" disabled={submitting || amountPaise === null || !selectedDeposit || exceedsBalance} className="h-14 w-full text-base">{submitting ? "Saving…" : "Save expense"}</Button>
-      <p className="text-center text-xs text-muted-foreground">Saved to the selected deposit after the server confirms the balance.</p>
+      <div className="fixed inset-x-0 z-40 border-t bg-background/95 px-3 pt-3 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur-xl md:static md:border-0 md:bg-transparent md:px-0 md:pt-1 md:shadow-none md:backdrop-blur-none" style={{ bottom: `calc(${keyboardInset}px + env(safe-area-inset-bottom) + 0.5rem)` }}>
+        <Button type="submit" disabled={submitting || amountPaise === null || !selectedDeposit || exceedsBalance} className="h-12 w-full text-base md:h-14">{submitting ? "Saving…" : "Save expense"}</Button>
+        <p className="mt-1 hidden text-center text-xs text-muted-foreground md:block">Saved to the selected deposit after the server confirms the balance.</p>
+      </div>
+      <p className="text-center text-xs text-muted-foreground md:hidden">Saved to the selected deposit after the server confirms the balance.</p>
     </form>
   </div>;
 }

@@ -1,12 +1,11 @@
 "use strict";
 
-const CACHE_NAME = "deposit-flow-static-v1";
-const PRECACHE_URLS = ["/offline.html", "/icons/icon-192.png", "/icons/icon-512.png"];
+const CACHE_NAME = "deposit-flow-static-v2";
 const STATIC_PATH = /^\/_next\/static\//;
 const ICON_PATH = /^\/icons\//;
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS)).then(() => self.skipWaiting()));
+  event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener("activate", (event) => {
@@ -21,12 +20,9 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Page HTML and all API/auth/finance responses are network-only and never enter Cache Storage.
-  if (request.mode === "navigate") {
-    event.respondWith(fetch(request).catch(async () => (await caches.match("/offline.html")) || Response.error()));
-    return;
-  }
-
+  // Deliberately use a static-asset allowlist. Documents, RSC requests, API
+  // routes, authentication, and every user-specific response pass untouched
+  // to the browser's normal network stack.
   if (!STATIC_PATH.test(url.pathname) && !ICON_PATH.test(url.pathname)) return;
   event.respondWith(caches.open(CACHE_NAME).then(async (cache) => {
     try {

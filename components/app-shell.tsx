@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import { BarChart3, CircleDollarSign, Goal, Home, Moon, PiggyBank, Plus, ReceiptText, Settings, Smartphone, Sun, LogOut } from "lucide-react";
@@ -21,15 +22,21 @@ const nav = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
+  const [logoutError, setLogoutError] = useState("");
+  const isQuickAdd = pathname === "/quick-add";
   async function logout() {
     const token = document.cookie.split("; ").find((part) => part.startsWith("finance_csrf="))?.split("=").slice(1).join("=") ?? "";
-    await fetch("/api/auth/logout", { method: "POST", headers: { "x-csrf-token": token } });
-    window.location.assign("/login");
+    setLogoutError("");
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST", headers: { "x-csrf-token": token }, credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) throw new Error("Could not sign out.");
+      window.location.assign("/login");
+    } catch { setLogoutError("Could not sign out. Check your connection and try again."); }
   }
 
   return (
-    <div className="min-h-screen pb-24 md:pb-0">
-      <header className="sticky top-0 z-40 border-b bg-background/76 backdrop-blur-xl">
+    <div className={isQuickAdd ? "min-h-[100dvh] overflow-x-clip" : "min-h-screen pb-24 md:pb-0"}>
+      <header className={cn("sticky top-0 z-40 border-b bg-background/76 backdrop-blur-xl", isQuickAdd && "hidden md:block")}>
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
           <Link href="/" className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-glow">
@@ -65,8 +72,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Button></div>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-5 md:py-8">{children}</main>
-      {pathname !== "/quick-add" ? <Button asChild className="fixed bottom-[5.25rem] right-4 z-40 h-12 rounded-full px-5 shadow-lg md:hidden"><Link href="/quick-add"><Plus className="h-5 w-5" />Expense</Link></Button> : null}
+      {logoutError ? <p className="mx-auto max-w-7xl px-4 pt-2 text-sm text-destructive" role="alert">{logoutError}</p> : null}
+      <main className={isQuickAdd ? "mx-auto w-full max-w-7xl px-3 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-3 sm:px-4 md:py-8" : "mx-auto max-w-7xl px-4 py-5 md:py-8"}>{children}</main>
+      {!isQuickAdd ? <Button asChild className="fixed bottom-[5.25rem] right-4 z-40 h-12 rounded-full px-5 shadow-lg md:hidden"><Link href="/quick-add"><Plus className="h-5 w-5" />Expense</Link></Button> : null}
+      {!isQuickAdd ? <>
       <nav className="fixed inset-x-0 bottom-0 z-50 border-t bg-background/86 px-2 py-2 backdrop-blur-xl md:hidden">
         <div className="grid grid-cols-8 gap-1">
           {nav.map((item) => {
@@ -88,6 +97,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </div>
       </nav>
+      </> : null}
     </div>
   );
 }

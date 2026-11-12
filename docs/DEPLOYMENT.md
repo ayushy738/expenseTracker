@@ -60,9 +60,10 @@ If a narrow Atlas IP allowlist is a requirement, choose a supported network path
 ### PWA and Quick Add release checks
 
 - Next.js serves the manifest at `/manifest.webmanifest`; verify it and `/icons/icon-192.png`, `/icons/icon-512.png`, and both maskable icons after deployment.
-- `/sw.js` caches only public static assets and icons. It never puts finance pages or `/api/*` responses into Cache Storage. No offline expense writes are supported.
+- `/sw.js` caches only public static assets and icons. It does not intercept documents, App Router/RSC requests, auth/PIN endpoints, finance APIs, or user-specific responses. No offline expense writes are supported.
 - Confirm `/quick-add` redirects unauthenticated and PIN-locked sessions through the existing dashboard layout. Verify normal expenses still post to `/api/expenses`, charge the selected user's deposit once, and show the refreshed server balance.
 - Installability and browser prompts vary by browser and device. Test with current Chrome on Android and use its install menu if no in-app prompt appears.
+- For `spend.ayushydv.me`, add the hostname to the same Vercel Production project, set its project-provided CNAME in Namecheap, wait for Vercel DNS verification and TLS issuance, and verify login/PIN/Quick Add before redirecting either hostname. Details are in [PWA setup](PWA_SETUP.md#custom-domain-spendayushydvme).
 
 ## Android release signing
 

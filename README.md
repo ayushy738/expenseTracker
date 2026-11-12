@@ -39,7 +39,7 @@ Quick Add needs a network connection. It does not queue expense writes offline.
 
 ### Install on Android as a PWA
 
-Open the production website in Chrome on Android, sign in, then use **Settings → Install app**. If Chrome does not expose an install prompt, open its ⋮ menu and choose **Install app** or **Add to Home screen** if offered. The PWA provides standalone launch and a Quick Add shortcut. Finance pages and API responses are never cached; offline navigation shows a generic offline page and financial data cannot be edited offline.
+Open the production website in Chrome on Android, sign in, then use **Settings → Install app**. If Chrome does not expose an install prompt, open its ⋮ menu and choose **Install app** or **Add to Home screen** if offered. The PWA provides standalone launch and a Quick Add shortcut. The service worker caches only public static assets and icons; documents, RSC requests, authentication, and finance APIs always use the network. If you open a page while offline, the browser handles the unavailable navigation. A page already open can report a failed request, and financial data cannot be edited offline.
 
 The PWA is the website in an installable browser shell. It is separate from the optional native Kotlin Android companion, which captures allowlisted new bank SMS and selected financial-app notifications and uploads candidates for manual website confirmation.
 

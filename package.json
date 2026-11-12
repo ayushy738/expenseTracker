@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "tsx --test tests/security.test.mjs tests/ingestion.test.mjs tests/models.test.mjs tests/quick-add.test.mjs tests/mongo.integration.test.ts"
+    "test": "tsx --test tests/security.test.mjs tests/ingestion.test.mjs tests/models.test.mjs tests/quick-add.test.mjs tests/pwa-auth.test.mjs tests/mongo.integration.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.0.1",

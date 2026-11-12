@@ -58,33 +58,48 @@ test("PWA manifest declares standalone app identity, shortcut, and public PNG ic
   }
 });
 
-test("service worker never caches finance HTML or API responses", async () => {
+test("service worker leaves app documents, auth, finance APIs, and RSC requests untouched", async () => {
   const source = readFileSync("public/sw.js", "utf8");
   const listeners = {};
   const written = [];
-  const cache = { match: async () => undefined, put: async (request) => written.push(request.url), addAll: async () => {} };
+  const cache = { match: async () => undefined, put: async (request) => written.push(request.url) };
+  const deleted = [];
   const self = { location: { origin: "https://finance.test" }, clients: { claim: async () => {} }, skipWaiting: async () => {}, addEventListener: (name, listener) => { listeners[name] = listener; } };
   runInNewContext(source, {
     self,
-    caches: { open: async () => cache, keys: async () => [], delete: async () => true, match: async (key) => key === "/offline.html" ? { offline: true } : undefined },
+    caches: { open: async () => cache, keys: async () => ["deposit-flow-static-v1", "unrelated-cache"], delete: async (key) => { deleted.push(key); return true; } },
     URL,
     fetch: async (request) => {
-      if (request.mode === "navigate") throw new Error("offline");
       return { ok: true, type: "basic", clone() { return this; } };
-    },
-    Response: { error: () => ({ error: true }) }
+    }
   });
 
-  for (const url of ["https://finance.test/api/expenses", "https://finance.test/quick-add"]) {
+  for (const [url, method, mode] of [
+    ["https://finance.test/", "GET", "navigate"],
+    ["https://finance.test/quick-add", "GET", "navigate"],
+    ["https://finance.test/login", "GET", "navigate"],
+    ["https://finance.test/register", "GET", "navigate"],
+    ["https://finance.test/unlock", "GET", "navigate"],
+    ["https://finance.test/api/auth/login", "POST", "cors"],
+    ["https://finance.test/api/auth/pin/unlock", "POST", "cors"],
+    ["https://finance.test/api/expenses", "GET", "cors"],
+    ["https://finance.test/expenses?_rsc=abc", "GET", "cors"],
+    ["https://finance.test/?_rsc=abc", "GET", "cors"]
+  ]) {
     let handled = false;
-    listeners.fetch({ request: { url, method: "GET", mode: url.endsWith("quick-add") ? "navigate" : "cors" }, respondWith: () => { handled = true; } });
-    if (url.includes("/api/")) assert.equal(handled, false);
+    listeners.fetch({ request: { url, method, mode }, respondWith: () => { handled = true; } });
+    assert.equal(handled, false, `${method} ${url} should not be intercepted`);
   }
-  let offlineResult;
-  listeners.fetch({ request: { url: "https://finance.test/quick-add", method: "GET", mode: "navigate" }, respondWith: (promise) => { offlineResult = promise; } });
-  assert.deepEqual(await offlineResult, { offline: true });
   let staticResult;
   listeners.fetch({ request: { url: "https://finance.test/_next/static/chunks/app.js", method: "GET", mode: "cors" }, respondWith: (promise) => { staticResult = promise; } });
   await staticResult;
   assert.deepEqual(written, ["https://finance.test/_next/static/chunks/app.js"]);
+
+  let unrelatedHandled = false;
+  listeners.fetch({ request: { url: "https://cdn.example/app.js", method: "GET", mode: "cors" }, respondWith: () => { unrelatedHandled = true; } });
+  assert.equal(unrelatedHandled, false);
+  let activation;
+  listeners.activate({ waitUntil: (promise) => { activation = promise; } });
+  await activation;
+  assert.deepEqual(deleted, ["deposit-flow-static-v1"]);
 });

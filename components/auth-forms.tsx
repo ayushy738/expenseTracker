@@ -1,20 +1,27 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { runWhileBusy } from "@/lib/auth-form-state";
 
 function csrf() { return document.cookie.split("; ").find((part) => part.startsWith("finance_csrf="))?.split("=").slice(1).join("=") ?? ""; }
 function AuthForm({ mode }: { mode: "login" | "register" }) {
-  const [error, setError] = useState(""); const [busy, setBusy] = useState(false); const router = useRouter();
+  const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setError(""); setBusy(true);
-    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    event.preventDefault();
+    const form = event.currentTarget;
+    setError("");
     try {
-      const response = await fetch(`/api/auth/${mode}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), credentials: "same-origin" });
-      const body = await response.json(); if (!response.ok) throw new Error(body.message || "Could not authenticate.");
-      router.replace("/"); router.refresh();
-    } catch (e) { setError(e instanceof Error ? e.message : "Request failed."); } finally { setBusy(false); }
+      await runWhileBusy(setBusy, async () => {
+        const data = Object.fromEntries(new FormData(form).entries());
+        const response = await fetch(`/api/auth/${mode}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), credentials: "same-origin", cache: "no-store" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(typeof body?.message === "string" ? body.message : "Could not authenticate.");
+        // A fresh document request avoids racing an App Router RSC transition
+        // with the Set-Cookie response in standalone browsers.
+        window.location.assign("/");
+      });
+    } catch (e) { setError(e instanceof Error ? e.message : "Request failed."); }
   }
   return <form onSubmit={submit} className="grid gap-4">
     {mode === "register" && <label className="grid gap-1 text-sm">Name<input name="name" autoComplete="name" required maxLength={100} className="h-11 rounded-xl border bg-background px-3" /></label>}
@@ -31,13 +38,33 @@ export function LoginForm() { return <AuthForm mode="login" />; }
 export function RegisterForm() { return <AuthForm mode="register" />; }
 
 export function PinUnlockForm() {
-  const [error, setError] = useState(""); const router = useRouter();
+  const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setError(""); const form = new FormData(event.currentTarget);
-    const response = await fetch("/api/auth/pin/unlock", { method: "POST", headers: { "Content-Type": "application/json", "x-csrf-token": csrf() }, body: JSON.stringify({ pin: form.get("pin") }) });
-    const body = await response.json(); if (!response.ok) { setError(body.message || "Could not unlock."); return; } router.replace("/"); router.refresh();
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    setError("");
+    try {
+      await runWhileBusy(setBusy, async () => {
+        const form = new FormData(formElement);
+        const response = await fetch("/api/auth/pin/unlock", { method: "POST", headers: { "Content-Type": "application/json", "x-csrf-token": csrf() }, body: JSON.stringify({ pin: form.get("pin") }), credentials: "same-origin", cache: "no-store" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(typeof body?.message === "string" ? body.message : "Could not unlock.");
+        window.location.assign("/");
+      });
+    } catch (error) {
+      setError(error instanceof Error && error.message ? error.message : "Could not reach the finance service. Check your connection and try again.");
+    }
   }
-  return <form onSubmit={submit} className="grid gap-4"><label className="grid gap-1 text-sm">4-digit PIN<input autoFocus name="pin" type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} required className="h-12 rounded-xl border bg-background px-3 text-center text-2xl tracking-[0.5em]" /></label>{error && <p role="alert" className="text-sm text-destructive">{error}</p>}<button className="h-11 rounded-xl bg-primary font-semibold text-primary-foreground">Unlock</button><button type="button" className="text-sm text-primary underline" onClick={async () => { await fetch("/api/auth/logout", { method: "POST", headers: { "x-csrf-token": csrf() } }); router.replace("/login"); }}>Sign out</button></form>;
+  return <form onSubmit={submit} className="grid gap-4"><label className="grid gap-1 text-sm">4-digit PIN<input name="pin" type="password" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} required className="h-12 rounded-xl border bg-background px-3 text-center text-2xl tracking-[0.5em]" /></label>{error && <p role="alert" className="text-sm text-destructive">{error}</p>}<button disabled={busy} className="h-11 rounded-xl bg-primary font-semibold text-primary-foreground">{busy ? "Please wait…" : "Unlock"}</button><button type="button" disabled={busy} className="text-sm text-primary underline disabled:opacity-60" onClick={async () => {
+    setError("");
+    try {
+      await runWhileBusy(setBusy, async () => {
+        const response = await fetch("/api/auth/logout", { method: "POST", headers: { "x-csrf-token": csrf() }, credentials: "same-origin", cache: "no-store" });
+        if (!response.ok) throw new Error("Could not sign out.");
+        window.location.assign("/login");
+      });
+    } catch { setError("Could not sign out. Check your connection and try again."); }
+  }}>Sign out</button></form>;
 }
 
 export function AccountSettings() {
