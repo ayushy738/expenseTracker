@@ -6,11 +6,15 @@ Deposit Flow Finance is a Next.js application with a MongoDB data store and an o
 
 ```text
 Browser
-  └─ Next.js dashboard (account, deposits, expenses, savings, goals, reports, inbox)
+  └─ Installable Next.js PWA (account, deposits, quick add, expenses, savings, goals, reports, inbox)
        └─ Next.js App Router API routes
             ├─ Cookie session + CSRF checks for browser operations
             ├─ User-scoped Mongoose queries and aggregations
             └─ MongoDB Atlas
+
+The PWA manifest provides standalone display and a `/quick-add` shortcut. Its service worker caches only same-origin versioned Next static assets and public app icons. Navigations are network-only with a generic offline fallback; authenticated HTML, financial APIs, session/PIN responses, and writes are not cached.
+
+Quick Add is a protected dashboard route. It reads the signed-in user's deposits, stores only the last successful deposit ID in browser storage namespaced by that user, and submits through the existing `POST /api/expenses` route. That route validates the session, CSRF token, deposit ownership, and available balance, then performs the existing MongoDB transaction. The client does not authoritatively change balances and does not queue offline expense writes.
 
 Android phone
   ├─ SMS_RECEIVED receiver (new messages only)

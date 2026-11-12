@@ -417,7 +417,7 @@ function OfflineBanner({ show }: { show: boolean }) {
   if (!show) return null;
   return (
     <div className="mb-5 rounded-2xl border border-amber-300/50 bg-amber-100/70 px-4 py-3 text-sm text-amber-950 dark:bg-amber-400/12 dark:text-amber-100">
-      MongoDB is not reachable. The interface is showing only records loaded from the database and will not save local-only changes.
+      <div className="flex flex-wrap items-center justify-between gap-3"><span>Finance data could not be loaded. Check your internet connection and refresh. Expenses are never saved offline.</span><Button variant="outline" size="sm" onClick={() => window.location.reload()}>Refresh</Button></div>
     </div>
   );
 }

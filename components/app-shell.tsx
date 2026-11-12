@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
-import { BarChart3, CircleDollarSign, Goal, Home, Moon, PiggyBank, ReceiptText, Settings, Smartphone, Sun, LogOut } from "lucide-react";
+import { BarChart3, CircleDollarSign, Goal, Home, Moon, PiggyBank, Plus, ReceiptText, Settings, Smartphone, Sun, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -54,7 +54,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               );
             })}
           </nav>
-          <div className="flex items-center gap-2"><Button variant="ghost" size="icon" aria-label="Sign out" onClick={logout}><LogOut className="h-4 w-4" /></Button><Button
+          <div className="flex items-center gap-2"><Button asChild className="hidden lg:inline-flex"><Link href="/quick-add"><Plus className="h-4 w-4" />Expense</Link></Button><Button variant="ghost" size="icon" aria-label="Sign out" onClick={logout}><LogOut className="h-4 w-4" /></Button><Button
             variant="outline"
             size="icon"
             aria-label="Toggle theme"
@@ -66,6 +66,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
       <main className="mx-auto max-w-7xl px-4 py-5 md:py-8">{children}</main>
+      {pathname !== "/quick-add" ? <Button asChild className="fixed bottom-[5.25rem] right-4 z-40 h-12 rounded-full px-5 shadow-lg md:hidden"><Link href="/quick-add"><Plus className="h-5 w-5" />Expense</Link></Button> : null}
       <nav className="fixed inset-x-0 bottom-0 z-50 border-t bg-background/86 px-2 py-2 backdrop-blur-xl md:hidden">
         <div className="grid grid-cols-8 gap-1">
           {nav.map((item) => {

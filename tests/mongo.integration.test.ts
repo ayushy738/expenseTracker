@@ -375,6 +375,48 @@ test("manual expense route still creates a deposit-linked expense and updates th
   assert.equal((await currentDeposit())?.remainingAmount, 80);
 });
 
+test("manual expense route rejects a deposit owned by another account", async () => {
+  const other = await UserModel.create({ name: "Other", email: `other-${crypto.randomUUID()}@test.local`, passwordHash: await hashSecret("CorrectHorse12") });
+  await DepositModel.create({ userId: other._id, depositId: "DEP-OTHER", amount: 100, source: "Other account", savingsAmount: 0, spendableAmount: 100, remainingAmount: 100, spentAmount: 0 });
+  const response = await manualExpenseRequest(new Request("https://local.test/api/expenses", {
+    method: "POST", headers: { ...authHeaders, "content-type": "application/json" }, body: JSON.stringify({ amount: 20, depositId: "DEP-OTHER", category: "Food" })
+  }));
+  assert.equal(response.status, 404);
+  assert.equal(await ExpenseModel.countDocuments(), 0);
+  assert.equal((await DepositModel.findOne({ userId: other._id, depositId: "DEP-OTHER" }))?.remainingAmount, 100);
+});
+
+test("manual expense route rejects an amount above the selected deposit's remaining balance", async () => {
+  await deposit(15);
+  const response = await manualExpenseRequest(new Request("https://local.test/api/expenses", {
+    method: "POST", headers: { ...authHeaders, "content-type": "application/json" }, body: JSON.stringify({ amount: "15.01", depositId: "DEP-001", category: "Food" })
+  }));
+  assert.equal(response.status, 400);
+  assert.equal(await ExpenseModel.countDocuments(), 0);
+  assert.equal((await currentDeposit())?.remainingAmount, 15);
+});
+
+test("manual expense route requires an unlocked PIN session and CSRF token", async () => {
+  await deposit(100);
+  const sessionToken = authHeaders.cookie.split(";")[0].split("=")[1];
+  await UserSessionModel.updateOne({ tokenHash: digestToken(sessionToken) }, { pinUnlockedUntil: new Date(0) });
+  const locked = await manualExpenseRequest(new Request("https://local.test/api/expenses", {
+    method: "POST", headers: { ...authHeaders, "content-type": "application/json" }, body: JSON.stringify({ amount: 10, depositId: "DEP-001", category: "Food" })
+  }));
+  assert.equal(locked.status, 423);
+
+  const unlockedSession = await UserSessionModel.findOne({ tokenHash: digestToken(sessionToken) });
+  assert.ok(unlockedSession);
+  unlockedSession!.pinUnlockedUntil = new Date(Date.now() + 60_000);
+  await unlockedSession!.save();
+  const withoutCsrf = await manualExpenseRequest(new Request("https://local.test/api/expenses", {
+    method: "POST", headers: { cookie: authHeaders.cookie, origin: "https://local.test", host: "local.test", "x-forwarded-proto": "https", "content-type": "application/json" }, body: JSON.stringify({ amount: 10, depositId: "DEP-001", category: "Food" })
+  }));
+  assert.equal(withoutCsrf.status, 403);
+  assert.equal(await ExpenseModel.countDocuments(), 0);
+  assert.equal((await currentDeposit())?.remainingAmount, 100);
+});
+
 test("manual deposit creation and editing retain savings and balance calculations", async () => {
   const created = await manualDepositRequest(new Request("https://local.test/api/deposits", {
     method: "POST", headers: { ...authHeaders, "content-type": "application/json" }, body: JSON.stringify({ amount: 100, source: "Salary", savingsAmount: 20, userId: "000000000000000000000000" })

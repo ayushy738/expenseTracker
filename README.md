@@ -9,6 +9,8 @@ The website remains the source of truth. Imported transactions stay pending unti
 ## What it does
 
 - Tracks deposits, savings funds, goals, expenses, and analytics.
+- Adds manual expenses from a focused, mobile-first Quick Add screen.
+- Installs from supported browsers as a standalone PWA with a Quick Add home-screen shortcut.
 - Keeps each confirmed expense tied to one of your deposits.
 - Provides email/password accounts, a server-side session, and an optional quick-lock PIN.
 - Lets an account owner pair, approve, and revoke Android devices.
@@ -28,6 +30,18 @@ Remaining amount = spendable amount − confirmed, non-reversed expenses
 ```
 
 When adding an expense, select the deposit it belongs to. The server checks that the deposit belongs to the signed-in account and has enough remaining balance. Imported SMS/notification candidates do **not** change balances until manually confirmed. Confirmation creates a linked expense and updates the deposit in a MongoDB transaction; duplicate confirmations are idempotent.
+
+### Quick Add Expense
+
+Use **+ Expense** from the dashboard shell or open `/quick-add`. Enter the amount, tap a deposit and category, then save. The last successfully used eligible deposit is remembered only in browser storage under a key scoped to the signed-in account. The server still validates deposit ownership and remaining balance and performs the existing transactional accounting; no balance is trusted from the browser. Date and note are optional details supported by the existing expense schema.
+
+Quick Add needs a network connection. It does not queue expense writes offline.
+
+### Install on Android as a PWA
+
+Open the production website in Chrome on Android, sign in, then use **Settings → Install app**. If Chrome does not expose an install prompt, open its ⋮ menu and choose **Install app** or **Add to Home screen** if offered. The PWA provides standalone launch and a Quick Add shortcut. Finance pages and API responses are never cached; offline navigation shows a generic offline page and financial data cannot be edited offline.
+
+The PWA is the website in an installable browser shell. It is separate from the optional native Kotlin Android companion, which captures allowlisted new bank SMS and selected financial-app notifications and uploads candidates for manual website confirmation.
 
 ## Android transaction workflow
 
@@ -50,7 +64,7 @@ The companion requests `RECEIVE_SMS`, not `READ_SMS`, and does not scan message 
 - **Android:** Kotlin, Jetpack Compose, Android Keystore, Room, and WorkManager.
 - **Hosting:** Vercel serverless functions for the web application and APIs.
 
-More detail: [Architecture](docs/ARCHITECTURE.md), [Security](docs/SECURITY.md), [Android setup](docs/ANDROID_SETUP.md), and [Deployment](docs/DEPLOYMENT.md).
+More detail: [Architecture](docs/ARCHITECTURE.md), [Security](docs/SECURITY.md), [Android setup](docs/ANDROID_SETUP.md), [PWA setup](docs/PWA_SETUP.md), and [Deployment](docs/DEPLOYMENT.md).
 
 ## Developer setup
 

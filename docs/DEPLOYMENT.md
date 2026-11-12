@@ -57,6 +57,13 @@ If a narrow Atlas IP allowlist is a requirement, choose a supported network path
 5. Push only after approval. If Git integration auto-deploys the production branch, the push itself can deploy; this review does not push or deploy.
 6. After an approved deployment, verify sign-in, PIN unlock, owner scoping, device approval/revocation, ingestion, pending inbox, and transaction confirmation against the intended environment. Never use a test synthetic E2E request against production.
 
+### PWA and Quick Add release checks
+
+- Next.js serves the manifest at `/manifest.webmanifest`; verify it and `/icons/icon-192.png`, `/icons/icon-512.png`, and both maskable icons after deployment.
+- `/sw.js` caches only public static assets and icons. It never puts finance pages or `/api/*` responses into Cache Storage. No offline expense writes are supported.
+- Confirm `/quick-add` redirects unauthenticated and PIN-locked sessions through the existing dashboard layout. Verify normal expenses still post to `/api/expenses`, charge the selected user's deposit once, and show the refreshed server balance.
+- Installability and browser prompts vary by browser and device. Test with current Chrome on Android and use its install menu if no in-app prompt appears.
+
 ## Android release signing
 
 `assembleRelease` creates an unsigned APK, not an installable trusted release. Generate a signed artifact in Android Studio using **Build → Generate Signed Bundle / APK…**. Create a keystore only as a deliberate manual action; this review does not generate one. Keep the key, alias, and passwords outside Git and maintain a secure backup. See [Android setup](ANDROID_SETUP.md).
