@@ -11,14 +11,28 @@ export const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 export type AuthContext = { userId: string; sessionId: string; pinUnlockedUntil: Date };
 type AuthResult = { context: AuthContext; response: null } | { context: null; response: NextResponse };
 
+type SessionState = "session_valid" | "session_token_not_found" | "session_expired" | "session_revoked";
+function diagnoseSession(state: SessionState | "no_session_cookie" | "pin_locked") {
+  // Deliberately exclude token, cookie, user, route, and financial values.
+  console.info("auth_session_state", { state });
+}
+
+async function findSessionForToken(token: string) {
+  return UserSessionModel.findOne({ tokenHash: digestToken(token) });
+}
+
 export async function getSessionContext(options: { allowPinLocked?: boolean } = {}): Promise<AuthContext | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
-  if (!token) return null;
+  if (!token) { diagnoseSession("no_session_cookie"); return null; }
   await connectToDatabase();
-  const session = await UserSessionModel.findOne({ tokenHash: digestToken(token), revokedAt: null, expiresAt: { $gt: new Date() } });
-  if (!session) return null;
-  if (!options.allowPinLocked && session.pinUnlockedUntil <= new Date()) return null;
+  const session = await findSessionForToken(token);
+  if (!session) { diagnoseSession("session_token_not_found"); return null; }
+  if (session.revokedAt) { diagnoseSession("session_revoked"); return null; }
+  if (session.expiresAt <= new Date()) { diagnoseSession("session_expired"); return null; }
+  const isPinLocked = session.pinUnlockedUntil <= new Date();
+  diagnoseSession(isPinLocked ? "pin_locked" : "session_valid");
+  if (!options.allowPinLocked && isPinLocked) return null;
   return { userId: String(session.userId), sessionId: String(session._id), pinUnlockedUntil: session.pinUnlockedUntil };
 }
 
@@ -31,16 +45,23 @@ export async function requireUser(options: { allowPinLocked?: boolean; csrf?: bo
   let pinLocked = false;
   if (request) {
     const token = readRequestCookie(request, SESSION_COOKIE);
-    if (!token) context = null;
+    if (!token) { diagnoseSession("no_session_cookie"); context = null; }
     else {
       await connectToDatabase();
-      const session = await UserSessionModel.findOne({ tokenHash: digestToken(token), revokedAt: null, expiresAt: { $gt: new Date() } });
-      context = session ? { userId: String(session.userId), sessionId: String(session._id), pinUnlockedUntil: session.pinUnlockedUntil } : null;
-      if (context && !options.allowPinLocked && context.pinUnlockedUntil <= new Date()) { context = null; pinLocked = true; }
+      const session = await findSessionForToken(token);
+      if (!session) { diagnoseSession("session_token_not_found"); context = null; }
+      else if (session.revokedAt) { diagnoseSession("session_revoked"); context = null; }
+      else if (session.expiresAt <= new Date()) { diagnoseSession("session_expired"); context = null; }
+      else {
+        context = { userId: String(session.userId), sessionId: String(session._id), pinUnlockedUntil: session.pinUnlockedUntil };
+        const isPinLocked = context.pinUnlockedUntil <= new Date();
+        diagnoseSession(isPinLocked ? "pin_locked" : "session_valid");
+        if (!options.allowPinLocked && isPinLocked) { context = null; pinLocked = true; }
+      }
     }
   } else {
     context = await getSessionContext({ allowPinLocked: true });
-    if (context && !options.allowPinLocked && context.pinUnlockedUntil <= new Date()) { context = null; pinLocked = true; }
+    if (context && !options.allowPinLocked && context.pinUnlockedUntil <= new Date()) { diagnoseSession("pin_locked"); context = null; pinLocked = true; }
   }
   if (!context) return { context: null, response: NextResponse.json({ message: pinLocked ? "Unlock this session with your PIN." : "Authentication required." }, { status: pinLocked ? 423 : 401 }) };
   if (options.csrf) {

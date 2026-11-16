@@ -32,7 +32,6 @@ export async function POST(request: Request) {
   const auth = await requireUser({ csrf: true }, request); if (auth.response) return auth.response; const userId = auth.context.userId;
   await connectToDatabase();
   const payload = ExpenseSchema.parse(await request.json());
-  await ExpenseModel.init();
   const session = await mongoose.startSession();
   let created: unknown;
   let failure: { status: number; message: string } | undefined;

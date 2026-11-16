@@ -36,6 +36,9 @@ export async function connectToDatabase() {
 
   const options = {
     bufferCommands: false,
+    // Production indexes are managed with reviewed migrations, not implicit
+    // Mongoose index builds during a user request.
+    autoIndex: process.env.NODE_ENV !== "production",
     // MONGODB_DB is authoritative so Atlas URIs that contain an old database
     // path cannot silently direct this deployment to the wrong database.
     dbName: resolveDatabaseName(MONGODB_URI, MONGODB_DB)

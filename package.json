@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "migrate:expense-bank-index": "node scripts/migrate-expense-bank-index.mjs",
     "test": "tsx --test tests/security.test.mjs tests/ingestion.test.mjs tests/models.test.mjs tests/quick-add.test.mjs tests/pwa-auth.test.mjs tests/mongo.integration.test.ts"
   },
   "dependencies": {

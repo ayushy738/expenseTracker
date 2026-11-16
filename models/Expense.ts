@@ -25,6 +25,11 @@ const ExpenseSchema = new Schema(
 );
 
 ExpenseSchema.index({ userId: 1, depositId: 1, date: -1 });
-ExpenseSchema.index({ userId: 1, bankTransactionId: 1 }, { unique: true, sparse: true });
+// Sparse compound indexes still index a document when another indexed field
+// (userId) exists. Restrict uniqueness to genuine ObjectId links instead.
+ExpenseSchema.index(
+  { userId: 1, bankTransactionId: 1 },
+  { unique: true, partialFilterExpression: { bankTransactionId: { $type: "objectId" } } }
+);
 
 export const ExpenseModel = models.Expense || mongoose.model("Expense", ExpenseSchema);

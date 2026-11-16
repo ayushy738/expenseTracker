@@ -375,6 +375,44 @@ test("manual expense route still creates a deposit-linked expense and updates th
   assert.equal((await currentDeposit())?.remainingAmount, 80);
 });
 
+test("multiple manual expenses per user coexist with linked expenses and preserve linked uniqueness", async () => {
+  await deposit(500);
+  const first = await manualExpenseRequest(new Request("https://local.test/api/expenses", {
+    method: "POST", headers: { ...authHeaders, "content-type": "application/json" },
+    body: JSON.stringify({ amount: 20, depositId: "DEP-001", category: "Food" })
+  }));
+  const second = await manualExpenseRequest(new Request("https://local.test/api/expenses", {
+    method: "POST", headers: { ...authHeaders, "content-type": "application/json" },
+    body: JSON.stringify({ amount: 30, depositId: "DEP-001", category: "Travel" })
+  }));
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 201);
+  const ownedDeposit = await DepositModel.findOne({ userId: ownerId, depositId: "DEP-001" });
+  assert.ok(ownedDeposit);
+  const bankTransactionId = new mongoose.Types.ObjectId();
+  const linked = await ExpenseModel.create({ userId: ownerId, amount: 10, category: "Other", depositId: "DEP-001", depositReference: ownedDeposit._id, bankTransactionId });
+  assert.ok(linked.bankTransactionId);
+  assert.equal(await ExpenseModel.countDocuments({ userId: ownerId }), 3);
+  await assert.rejects(() => ExpenseModel.create({ userId: ownerId, amount: 10, category: "Other", depositId: "DEP-001", depositReference: linked.depositReference, bankTransactionId: linked.bankTransactionId }), (error: unknown) => Boolean(error && typeof error === "object" && "code" in error && error.code === 11000));
+  const anotherUser = await UserModel.create({ name: "Other", email: `other-${crypto.randomUUID()}@test.local`, passwordHash: await hashSecret("CorrectHorse12") });
+  await ExpenseModel.create({ userId: anotherUser._id, amount: 10, category: "Other", depositId: "OTHER-DEP", depositReference: new mongoose.Types.ObjectId(), bankTransactionId });
+});
+
+test("manual expense failures roll back deposit balance reservations", async () => {
+  const original = ExpenseModel.create;
+  await deposit(100);
+  ExpenseModel.create = (async () => { throw new Error("injected manual expense write failure"); }) as typeof ExpenseModel.create;
+  try {
+    await assert.rejects(() => manualExpenseRequest(new Request("https://local.test/api/expenses", {
+      method: "POST", headers: { ...authHeaders, "content-type": "application/json" },
+      body: JSON.stringify({ amount: 25, depositId: "DEP-001", category: "Food" })
+    })), /injected manual expense write failure/);
+  } finally { ExpenseModel.create = original; }
+  assert.equal((await currentDeposit())?.remainingAmount, 100);
+  assert.equal((await currentDeposit())?.spentAmount, 0);
+  assert.equal(await ExpenseModel.countDocuments({ userId: ownerId }), 0);
+});
+
 test("manual expense route rejects a deposit owned by another account", async () => {
   const other = await UserModel.create({ name: "Other", email: `other-${crypto.randomUUID()}@test.local`, passwordHash: await hashSecret("CorrectHorse12") });
   await DepositModel.create({ userId: other._id, depositId: "DEP-OTHER", amount: 100, source: "Other account", savingsAmount: 0, spendableAmount: 100, remainingAmount: 100, spentAmount: 0 });

@@ -13,7 +13,7 @@ test("transaction and expense models enforce duplicate links without relaxing de
 
   const expenseTransactionIndex = ExpenseModel.schema.indexes().find(([keys]) => keys.bankTransactionId === 1);
   assert.equal(expenseTransactionIndex?.[1]?.unique, true);
-  assert.equal(expenseTransactionIndex?.[1]?.sparse, true);
+  assert.deepEqual(expenseTransactionIndex?.[1]?.partialFilterExpression, { bankTransactionId: { $type: "objectId" } });
   assert.equal(ExpenseModel.schema.path("depositId").isRequired, true);
   assert.equal(ExpenseModel.schema.path("depositReference").isRequired, true);
 });
@@ -43,5 +43,5 @@ test("all user-owned finance and device models require owner references and use 
   }
   assert.ok(DepositModel.schema.indexes().some(([keys, options]) => keys.userId === 1 && keys.depositId === 1 && options.unique));
   assert.ok(BankTransactionModel.schema.indexes().some(([keys, options]) => keys.userId === 1 && keys.fingerprint === 1 && options.unique));
-  assert.ok(ExpenseModel.schema.indexes().some(([keys, options]) => keys.userId === 1 && keys.bankTransactionId === 1 && options.unique && options.sparse));
+  assert.ok(ExpenseModel.schema.indexes().some(([keys, options]) => keys.userId === 1 && keys.bankTransactionId === 1 && options.unique && options.partialFilterExpression?.bankTransactionId?.$type === "objectId"));
 });
