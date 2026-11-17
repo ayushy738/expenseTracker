@@ -1,6 +1,7 @@
 import test, { before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import mongoose from "mongoose";
 import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { DepositModel } from "../models/Deposit";
@@ -100,6 +101,15 @@ async function currentTransaction(id: unknown) {
   return await BankTransactionModel.findById(id).lean() as unknown as { status: string; history?: Array<{ action: string; reason?: string; snapshot?: { amount: number } }> } | null;
 }
 
+function runExpenseIndexMigration(args: string[] = []) {
+  return spawnSync(process.execPath, ["scripts/migrate-expense-bank-index.mjs", ...args], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env, MONGODB_URI: repl.getUri("finance_integration_e2e"), MONGODB_DB: "finance_integration_e2e" },
+    timeout: 30_000
+  });
+}
+
 async function importedTransaction(amount: number, fingerprint = `fp-${crypto.randomUUID()}`) {
   const device = await DeviceModel.create({ userId: ownerId, name: "Integration", tokenHash: hashDeviceToken(createDeviceToken()), status: "ACTIVE" });
   return BankTransactionModel.create({ userId: ownerId, amount, transactionType: "DEBIT", merchant: "Test merchant", timestamp: new Date(), deviceId: device._id, fingerprint, status: "PENDING" });
@@ -110,6 +120,104 @@ async function confirm(id: unknown) {
     method: "POST", headers: { ...authHeaders, "content-type": "application/json" }, body: JSON.stringify({ action: "confirm", depositId: "DEP-001", category: "Other" })
   }), { params: Promise.resolve({ id: String(id) }) });
 }
+
+test("expense index migration safely replaces old, handles both or neither, refuses unsafe states, and stays fixed at runtime", async () => {
+  const collection = mongoose.connection.db!.collection("expenses");
+  const oldName = "userId_1_bankTransactionId_1";
+  const replacementName = "userId_1_bankTransactionId_objectid_unique";
+  const key = { userId: 1, bankTransactionId: 1 };
+  const partial = { bankTransactionId: { $type: "objectId" } };
+  const dropIfPresent = async (name: string) => {
+    if ((await collection.indexes()).some((index) => index.name === name)) await collection.dropIndex(name);
+  };
+  const apply = () => runExpenseIndexMigration(["--apply", "--confirm-db=finance_integration_e2e"]);
+  try {
+    await dropIfPresent(oldName);
+    await dropIfPresent(replacementName);
+    await collection.createIndex(key, { name: oldName, unique: true, sparse: true });
+    await collection.insertOne({ userId: ownerId, amount: 1, category: "Other", depositId: "MIGRATION-MANUAL", depositReference: new mongoose.Types.ObjectId() });
+
+    const dryOldOnly = runExpenseIndexMigration();
+    assert.equal(dryOldOnly.status, 0, dryOldOnly.stderr || dryOldOnly.stdout);
+    assert.match(dryOldOnly.stdout, /"plan": "replace_obsolete_index"/);
+    assert.ok((await collection.indexes()).some((index) => index.name === oldName));
+    assert.ok(!(await collection.indexes()).some((index) => index.name === replacementName));
+    assert.equal(await collection.countDocuments({ userId: ownerId }), 1);
+
+    const replaced = apply();
+    assert.equal(replaced.status, 0, replaced.stderr || replaced.stdout);
+    let indexes = await collection.indexes();
+    assert.ok(!indexes.some((index) => index.name === oldName));
+    assert.deepEqual(indexes.find((index) => index.name === replacementName)?.partialFilterExpression, partial);
+
+    await collection.createIndex(key, { name: oldName, unique: true, sparse: true });
+    const dryBoth = runExpenseIndexMigration();
+    assert.equal(dryBoth.status, 0, dryBoth.stderr || dryBoth.stdout);
+    assert.match(dryBoth.stdout, /is obsolete; apply will remove only that verified index/);
+    assert.ok((await collection.indexes()).some((index) => index.name === oldName));
+    const bothApplied = apply();
+    assert.equal(bothApplied.status, 0, bothApplied.stderr || bothApplied.stdout);
+    indexes = await collection.indexes();
+    assert.ok(!indexes.some((index) => index.name === oldName));
+    assert.deepEqual(indexes.find((index) => index.name === replacementName)?.partialFilterExpression, partial);
+
+    const idempotent = apply();
+    assert.equal(idempotent.status, 0, idempotent.stderr || idempotent.stdout);
+    assert.match(idempotent.stdout, /Replacement already exists; migration is complete/);
+
+    // Exercise the real confirmation path after migration. It must not call
+    // ExpenseModel.init() and recreate the obsolete index.
+    await deposit(100);
+    const transaction = await importedTransaction(10);
+    assert.equal((await confirm(transaction._id)).status, 200);
+    assert.ok(!(await collection.indexes()).some((index) => index.name === oldName));
+
+    await dropIfPresent(replacementName);
+    await collection.createIndex(key, { name: oldName, unique: true });
+    const unexpected = apply();
+    assert.notEqual(unexpected.status, 0);
+    assert.match(unexpected.stderr, /does not exactly match the expected unique sparse key/);
+    assert.ok((await collection.indexes()).some((index) => index.name === oldName));
+
+    await dropIfPresent(oldName);
+    const dryNeither = runExpenseIndexMigration();
+    assert.equal(dryNeither.status, 0, dryNeither.stderr || dryNeither.stdout);
+    assert.match(dryNeither.stdout, /"plan": "create_replacement_index"/);
+    assert.ok(!(await collection.indexes()).some((index) => index.name === replacementName));
+    const created = apply();
+    assert.equal(created.status, 0, created.stderr || created.stdout);
+    assert.deepEqual((await collection.indexes()).find((index) => index.name === replacementName)?.partialFilterExpression, partial);
+
+    await dropIfPresent(replacementName);
+    const duplicateUser = new mongoose.Types.ObjectId();
+    const duplicateBankId = new mongoose.Types.ObjectId();
+    await collection.insertMany([
+      { userId: duplicateUser, amount: 1, bankTransactionId: duplicateBankId },
+      { userId: duplicateUser, amount: 2, bankTransactionId: duplicateBankId }
+    ]);
+    const duplicateResult = apply();
+    assert.notEqual(duplicateResult.status, 0);
+    assert.match(duplicateResult.stderr, /Found duplicate genuine bank links/);
+    assert.ok(!(await collection.indexes()).some((index) => index.name === replacementName));
+    await collection.deleteMany({ userId: duplicateUser });
+  } finally {
+    await collection.deleteMany({ userId: ownerId });
+    await dropIfPresent(oldName);
+    await dropIfPresent(replacementName);
+    await collection.createIndex(key, { name: replacementName, unique: true, partialFilterExpression: partial });
+  }
+});
+
+test("development model initialization after HMR replaces a stale cached Expense schema without recreating the sparse index", () => {
+  const dbName = "finance_model_cache_e2e";
+  const result = spawnSync(process.execPath, ["--import", "tsx", "tests/fixtures/expense-model-hmr.mjs"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env, NODE_ENV: "development", MONGODB_URI: repl.getUri(dbName), MONGODB_DB: dbName },
+    timeout: 30_000
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
 
 async function startPairing() {
   const response = await devicesRequest(new Request("https://local.test/api/devices", {

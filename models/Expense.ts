@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 
 const { Schema, models } = mongoose;
+export const BANK_TRANSACTION_EXPENSE_INDEX = "userId_1_bankTransactionId_objectid_unique";
 
 const ExpenseSchema = new Schema(
   {
@@ -29,7 +30,20 @@ ExpenseSchema.index({ userId: 1, depositId: 1, date: -1 });
 // (userId) exists. Restrict uniqueness to genuine ObjectId links instead.
 ExpenseSchema.index(
   { userId: 1, bankTransactionId: 1 },
-  { unique: true, partialFilterExpression: { bankTransactionId: { $type: "objectId" } } }
+  { name: BANK_TRANSACTION_EXPENSE_INDEX, unique: true, partialFilterExpression: { bankTransactionId: { $type: "objectId" } } }
 );
 
-export const ExpenseModel = models.Expense || mongoose.model("Expense", ExpenseSchema);
+function hasObsoleteBankIndex(model: typeof models.Expense) {
+  return model?.schema.indexes().some(([keys, options]) =>
+    keys.userId === 1 && keys.bankTransactionId === 1 && options.unique === true && options.sparse === true
+  ) ?? false;
+}
+
+// Next.js development HMR preserves mongoose.models across module reloads.
+// Replace only a cached Expense model with the known obsolete index signature.
+export function getExpenseModel() {
+  if (hasObsoleteBankIndex(models.Expense)) mongoose.deleteModel("Expense");
+  return models.Expense || mongoose.model("Expense", ExpenseSchema);
+}
+
+export const ExpenseModel = getExpenseModel();

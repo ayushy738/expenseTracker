@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import mongoose from "mongoose";
 import { BankTransactionModel } from "../models/BankTransaction.ts";
-import { ExpenseModel } from "../models/Expense.ts";
+import { BANK_TRANSACTION_EXPENSE_INDEX, ExpenseModel, getExpenseModel } from "../models/Expense.ts";
 import { DeviceModel } from "../models/Device.ts";
 import { DepositModel } from "../models/Deposit.ts";
 import { SavingsFundModel } from "../models/SavingsFund.ts";
@@ -13,9 +14,23 @@ test("transaction and expense models enforce duplicate links without relaxing de
 
   const expenseTransactionIndex = ExpenseModel.schema.indexes().find(([keys]) => keys.bankTransactionId === 1);
   assert.equal(expenseTransactionIndex?.[1]?.unique, true);
+  assert.equal(expenseTransactionIndex?.[1]?.name, BANK_TRANSACTION_EXPENSE_INDEX);
   assert.deepEqual(expenseTransactionIndex?.[1]?.partialFilterExpression, { bankTransactionId: { $type: "objectId" } });
   assert.equal(ExpenseModel.schema.path("depositId").isRequired, true);
   assert.equal(ExpenseModel.schema.path("depositReference").isRequired, true);
+});
+
+test("Expense model cache replaces an obsolete sparse index definition after hot reload", () => {
+  const legacySchema = new mongoose.Schema({ userId: mongoose.Schema.Types.ObjectId, bankTransactionId: mongoose.Schema.Types.ObjectId });
+  legacySchema.index({ userId: 1, bankTransactionId: 1 }, { unique: true, sparse: true });
+  mongoose.deleteModel("Expense");
+  mongoose.model("Expense", legacySchema);
+
+  const refreshed = getExpenseModel();
+  const bankIndex = refreshed.schema.indexes().find(([keys]) => keys.bankTransactionId === 1);
+  assert.equal(bankIndex?.[1]?.sparse, undefined);
+  assert.deepEqual(bankIndex?.[1]?.partialFilterExpression, { bankTransactionId: { $type: "objectId" } });
+  assert.notEqual(refreshed, ExpenseModel);
 });
 
 test("transaction status model supports review, ignore, and reversal history", () => {

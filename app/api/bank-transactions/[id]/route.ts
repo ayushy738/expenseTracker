@@ -112,7 +112,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const payload = ConfirmSchema.safeParse(body);
   if (!payload.success) return NextResponse.json({ message: "Choose a deposit and category, or provide a correction/reversal reason." }, { status: 400 });
 
-  await ExpenseModel.init();
   const session = await mongoose.startSession();
   let expenseId: mongoose.Types.ObjectId | undefined;
   let alreadyConfirmed = false;
